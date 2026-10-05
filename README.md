@@ -18,17 +18,43 @@
 | `orch_gui.bat` | เปิดเฉพาะ GUI |
 | `orch_engine.bat [QUEUE]` | รัน engine ของคิวที่ระบุในหน้าต่างนี้ (Ctrl+C เพื่อหยุด) |
 | `orch.bat` | ตัวเรียก CLI ใช้ `orch query` แทน `python orch.py query` ได้ |
+| `setup.bat` / `setup.ps1` | **ติดตั้งหรืออัปเดตแบบดับเบิลคลิกครั้งเดียว** (ดูหัวข้อติดตั้ง) |
+| `uninstall.bat` / `uninstall.ps1` | ถอนการติดตั้ง (เก็บข้อมูลไว้) |
+| `package.bat` | สร้างไฟล์ zip สำหรับส่งไปติดตั้งเครื่องอื่น (`dist\Orch-<วันที่>.zip`) |
 | `tests/` | ชุดทดสอบ (`unittest`) |
 | `docs/MANUAL.md` | **คู่มือการใช้งานและการตั้งค่า** (ติดตั้ง, สร้างงาน, schedule, ตัวเลือก, engine, แก้ปัญหา) |
 | `docs/TECHNICAL.md` | **เอกสารทางเทคนิค** (สถาปัตยกรรม, data model, การทำงานภายใน, การทดสอบ) |
 
 ## ติดตั้ง
 
+**แตก zip แล้วดับเบิลคลิก `setup.bat`** จากนั้นกด Yes ที่หน้าต่าง UAC ครั้งเดียว สคริปต์จะทำให้ทั้งหมด:
+
+- ลง Python 3.12 แบบ all users ถ้ายังไม่มี Python 3.10 ขึ้นไปที่ติดตั้งให้ทุกคน (ใช้ winget หรือตัวติดตั้งที่วางไว้ข้าง ๆ)
+- ติดตั้ง `pyodbc` ให้ทั้งเครื่อง
+- คัดลอกไฟล์ไปที่ `C:\Orch` แล้วสร้างฐานข้อมูล
+- ลงทะเบียน engine ของคิว `default` ให้เปิดเองตอนบูต แล้วสั่งเริ่มทันที
+- สร้างไอคอน **Orch** บน Desktop และใน Start menu (เปิด GUI)
+- เพิ่ม `C:\Orch` ลง PATH ของเครื่อง เพื่อให้พิมพ์ `orch query` ได้จากทุกโฟลเดอร์
+
+ตอนจบสคริปต์จะสรุปผลให้ และบันทึก log ไว้ที่ `C:\Orch\logs\setup-<เวลา>.log`
+
+- **อัปเดตเวอร์ชัน:** แตก zip เวอร์ชันใหม่แล้วรัน `setup.bat` ทับ สคริปต์จะหยุด engine แบบปลอดภัยก่อน (`stop-engine`) แล้วคัดลอกไฟล์
+  โดยไม่แตะ `orch.db` และ log จึงได้งานและประวัติเดิมครบ
+- **ตัวเลือก:** `setup.bat -InstallDir D:\Orch`, หรือเพิ่มคิวสำหรับ UI automation ด้วย `setup.bat -Queue ui -Trigger logon`
+  (แบบ logon จะลงทะเบียนให้ user ที่รัน setup)
+- **เครื่องที่ไม่มีอินเทอร์เน็ต:** วาง `python-3.12.x-amd64.exe` (จาก python.org) และ `pyodbc-*-cp312-*-win_amd64.whl` ไว้ข้าง `setup.bat` ก่อนรัน
+- **ถอนการติดตั้ง:** ดับเบิลคลิก `C:\Orch\uninstall.bat` ซึ่งจะลบ task, ไอคอน และ PATH แต่ **เก็บ `C:\Orch` และ `orch.db` ไว้**
+  (ติดตั้งกลับแล้วได้งานเดิมคืน ถ้าไม่ต้องการข้อมูลแล้วให้ลบโฟลเดอร์เอง)
+- **สร้าง zip ไปติดตั้งเครื่องอื่น:** commit ให้เรียบร้อยแล้วรัน `package.bat` (ต้องมี git)
+
+### ติดตั้งเอง (ไม่ใช้ setup.bat)
+
 1. ติดตั้ง Python 3.10 ขึ้นไป (แนะนำ 3.12) โดยเลือก "Install for all users" และ "Add python.exe to PATH"
    (engine ที่รันในนาม SYSTEM ต้องเข้าถึง Python และ `pyodbc` ได้ ห้ามติดตั้งแบบรายผู้ใช้หรือ `pip install --user`)
 2. คัดลอกโฟลเดอร์นี้ไปไว้บน **local disk** (ห้ามไว้บน network share เพราะ SQLite WAL ใช้บน share ไม่ได้)
 3. `python orch.py init`
-4. (ถ้าใช้ `sql` กับ SQL Server) `pip install pyodbc` และติดตั้ง ODBC Driver for SQL Server
+4. (ถ้าใช้ `sql` กับ SQL Server) `pip install pyodbc` ใน prompt แบบ Administrator และติดตั้ง ODBC Driver for SQL Server
+5. ลงทะเบียน engine ด้วย `install-startup` (ดู[การเปิด engine อัตโนมัติ](#การเปิด-engine-อัตโนมัติ-windows))
 
 ค่าเริ่มต้น DB คือ `orch.db` ข้างไฟล์ `orch.py` เปลี่ยนได้ด้วย `--db PATH` (ใส่ก่อนคำสั่ง) หรือตัวแปร `ORCH_DB`
 log ของ engine อยู่ที่ `logs\engine-<queue>.log` ข้างไฟล์ DB
@@ -201,6 +227,11 @@ stress test (SPEC §11) เปิด engine 3 คิวพร้อมกัน 
 ## Manual test checklist (Windows)
 
 ส่วนที่ต้องทดสอบบนเครื่อง Windows จริง (ไม่อยู่ในชุด test อัตโนมัติ):
+
+- [ ] **setup.bat บนเครื่องใหม่** (หรือ Windows Sandbox) ที่ยังไม่มี Python ทั้งแบบมีอินเทอร์เน็ต (winget) และแบบ offline:
+      ได้ไอคอน Orch, `orch query` ใช้ได้ในหน้าต่างใหม่ และแถบบนของ GUI แสดงว่า engine `default` กำลังทำงาน
+- [ ] **อัปเดตด้วย setup.bat ทับ**: งานและประวัติเดิมยังอยู่ และ engine log มี `stop requested (stop-engine)` ก่อน engine เริ่มใหม่
+- [ ] **uninstall.bat**: task, ไอคอน และ PATH หายไป ส่วน `orch.db` ยังอยู่
 
 - [ ] **Boot task**: เปิด prompt แบบ Administrator แล้วสั่ง `install-startup --queue default --trigger boot --apply` จากนั้นดูผลว่า `ExecutionTimeLimit` เป็น `PT0S`
       และ `Triggers` เป็น 2 (สคริปต์แสดงทั้งสองค่าตอนจบ หรือดูด้วย `(Get-ScheduledTask 'Orch Engine (default)').Settings.ExecutionTimeLimit`)

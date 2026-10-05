@@ -77,6 +77,7 @@ Orch เป็นตัวตั้งเวลารันงานแทน Wi
 | `orch_gui.py` | GUI (tkinter) เรียกฟังก์ชันใน `orch.py` เท่านั้น ไม่มี business logic ของตัวเอง |
 | `tests/` | ชุดทดสอบ `unittest` (`helpers.py` + `test_01` ถึง `test_12`) |
 | `*.bat` | ตัวเปิดโปรแกรมสำหรับผู้ใช้ (ASCII + CRLF) |
+| `setup.ps1` / `uninstall.ps1` | ตัวติดตั้งและตัวถอนการติดตั้ง (UTF-8 **with BOM** + CRLF เพราะ PowerShell 5.1 อ่านไฟล์ที่ไม่มี BOM เป็น ANSI ทำให้ข้อความภาษาไทยเพี้ยน) |
 | `logs/engine-<queue>.log` | log ของ engine (สร้างข้างไฟล์ DB) |
 
 `orch.py` เรียงเป็นส่วน ๆ ตามลำดับนี้
@@ -381,6 +382,35 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 
 ต้องใช้ `Register-ScheduledTask` เพราะ task ที่สร้างด้วย `schtasks` ถูกตั้ง *Stop the task if it runs longer than 72 hours* ไว้เป็นค่าเริ่มต้น
 
+### ตัวติดตั้ง (`setup.bat` → `setup.ps1`)
+
+`setup.bat` ตรวจสิทธิ์ด้วย `fltmc` ถ้ายังไม่ใช่ Administrator จะเรียกตัวเองใหม่ด้วย `Start-Process -Verb RunAs`
+จากนั้นรัน `setup.ps1` ด้วย `-ExecutionPolicy Bypass` ตัวสคริปต์ไม่มีตรรกะของ Orch เอง แต่เรียกคำสั่งที่มีอยู่แล้วใน `orch.py` เท่านั้น
+(`init`, `stop-engine`, `install-startup --apply`) โดยมีขั้นตอนดังนี้
+
+1. **หา Python** จาก `HKLM:\SOFTWARE\Python\PythonCore\<ver>\InstallPath` (เวอร์ชัน ≥ 3.10 ที่สูงที่สุด)
+   - ใช้ HKLM เท่านั้น เพราะ Python แบบรายผู้ใช้ลงทะเบียนใน HKCU และ engine ที่รันในนาม SYSTEM ใช้ไม่ได้
+   - ถ้าไม่พบ จะลงด้วย `python-3.*-amd64.exe` ที่วางไว้ข้างสคริปต์ หรือ winget (`--scope machine`) ด้วย `InstallAllUsers=1 PrependPath=1`
+2. **pyodbc** ติดตั้งด้วย `pip install --find-links <โฟลเดอร์ setup>` แล้วตรวจว่า `pyodbc.__file__` อยู่ใต้ `sys.prefix` (ไม่ใช่ user site)
+   ถ้าล้มเหลวจะเตือนแต่ติดตั้งต่อ
+3. **อัปเดต:** ถ้ามี task อยู่แล้ว จะ `Disable-ScheduledTask` เพื่อกันไม่ให้ trigger ที่ทำซ้ำเปิด engine ใหม่ระหว่างคัดลอก
+   ตามด้วย `stop-engine --wait 60` และ `Stop-ScheduledTask` เผื่อกรณีที่ engine ไม่หยุด
+4. **คัดลอก** ด้วย `robocopy /E` (ไม่ใช้ `/MIR` จึงไม่ลบอะไรที่ปลายทาง) โดยยกเว้น `.git __pycache__ logs backup dist` และ `orch.db* python-*.exe *.whl`
+5. `init` ซึ่งสร้าง DB ใหม่หรือ migrate schema เดิม
+6. `install-startup --apply` ซึ่งใช้ `-Force` จึงแทนที่ task เดิมและ task กลับเป็น enabled จากนั้น `Start-ScheduledTask`
+   แล้วรอไม่เกิน 30 วินาทีจน `engine_states()` บอกว่า running และตรวจว่า task มี `PT0S` และ trigger 2 ตัว
+7. สร้าง shortcut ใน Desktop และ Start menu ของ all users (`pythonw.exe "<dir>\orch_gui.py" --db "<dir>\orch.db"`)
+8. เพิ่มโฟลเดอร์ติดตั้งและโฟลเดอร์ Python ลง machine PATH โดยเขียน registry ตรง ๆ แบบ `REG_EXPAND_SZ` ที่ยังไม่ขยาย `%VAR%`
+   (`setx` ตัด PATH ที่ยาวเกิน 1024 ตัวอักษร) แล้วส่ง `WM_SETTINGCHANGE`
+
+ทุกขั้นถูกบันทึกด้วย `Start-Transcript` ลง `<dir>\logs\setup-<เวลา>.log` ส่วน output ของโปรแกรมภายนอกส่งผ่าน pipeline เพื่อให้ถูกบันทึกด้วย
+ถ้าล้มระหว่างอัปเดต จะ enable และ start task เดิมกลับให้
+
+`uninstall.ps1` จัดการเฉพาะ task (`Orch Engine (*)`) และ shortcut ที่อ้างถึงโฟลเดอร์ของตัวเองเท่านั้น จึงไม่กระทบ Orch ที่ติดตั้งไว้ที่อื่น
+มันจะหยุด engine แบบปลอดภัย, ลบ task, ไอคอน และ PATH ของโฟลเดอร์นั้น แต่ไม่ลบโฟลเดอร์และ `orch.db`
+(ไม่เอาโฟลเดอร์ Python ออกจาก PATH เพราะโปรแกรมอื่นอาจใช้)
+`package.bat` ใช้ `git archive HEAD` จึงได้เฉพาะไฟล์ที่ commit แล้ว
+
 ## 16. ค่าคงที่และ exit code
 
 | ค่าคงที่ | ค่า | ความหมาย |
@@ -408,7 +438,7 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 
 ## 17. การทดสอบ
 
-- ใช้ `unittest` (stdlib) รันด้วย `python -m unittest discover -s tests -p "test_*.py"` (135 test ใช้เวลาประมาณ 70 วินาที)
+- ใช้ `unittest` (stdlib) รันด้วย `python -m unittest discover -s tests -p "test_*.py"` (138 test ใช้เวลาประมาณ 70 วินาที)
 - `tests/helpers.py`: `DBTestCase` สร้างโฟลเดอร์ชั่วคราวและ `ORCH_DB` แยกให้แต่ละ test มี `cli()`, `start_engine()` (เปิด engine เป็น subprocess จริง),
   `stop_engine()` (CTRL_BREAK หรือ SIGTERM), `wait_until()` และ `py_cmd()`
 - งานใน test ใช้ `sys.executable -c "..."` จึงรันได้ทุก OS
@@ -428,7 +458,7 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 | `test_08_engine` | engine subprocess: lock, recovery, shutdown, schedule ระหว่างงานยาว, Test Plan #2/#4/#7/#11 |
 | `test_09_exec` | sql (sqlite) และ http (server ภายในเครื่อง) |
 | `test_10_gui` | ตาราง, refresh ในที่เดิม, ปุ่ม, dialog |
-| `test_11_install` | สคริปต์ install-startup, `--db`, ไฟล์ .bat, ภาษาไทยผ่าน cmd/PowerShell/Python, engine ผ่าน pythonw |
+| `test_11_install` | สคริปต์ install-startup, `--db`, ไฟล์ .bat, ภาษาไทยผ่าน cmd/PowerShell/Python, engine ผ่าน pythonw, setup/uninstall.ps1 (BOM, parse, ปฏิเสธเมื่อไม่ใช่ Administrator) |
 | `test_12_stress` | lock contention (เฉพาะเมื่อตั้ง `ORCH_STRESS=1`) |
 
 ## 18. ส่วนที่เพิ่มหรือตีความจาก SPEC
@@ -447,6 +477,7 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 | http: userinfo ใน URL | แปลงเป็น Basic auth และตัดออกจาก log | urllib ไม่รองรับ userinfo และป้องกันรหัสผ่านหลุดลง log |
 | `_Cursor.fetchone` ปิด cursor | ป้องกัน snapshot ค้าง | connection ที่เปิดนานต้องเห็นการเขียนจากโปรเซสอื่น |
 | ไฟล์ `.bat` | ตัวเปิดโปรแกรมสำหรับผู้ใช้ | ผู้ใช้ขอเพิ่ม |
+| `setup.bat` / `uninstall.bat` / `package.bat` | ติดตั้งแบบดับเบิลคลิกครั้งเดียว | ผู้ใช้ขอ (เลือกแทนการทำเป็น .exe ด้วย PyInstaller) |
 
 ## 19. ข้อจำกัดที่รู้
 

@@ -26,6 +26,32 @@
 
 ## 1. ติดตั้ง
 
+### 1.1 ติดตั้งด้วย setup.bat (แนะนำ)
+
+1. แตกไฟล์ zip ของ Orch ไว้ที่ไหนก็ได้ (เช่น Downloads)
+2. ดับเบิลคลิก **`setup.bat`** แล้วกด **Yes** ที่หน้าต่าง UAC
+3. รอจนขึ้น `ติดตั้งเสร็จแล้ว` แล้วกดปุ่มใดก็ได้เพื่อปิดหน้าต่าง
+
+สิ่งที่ setup ทำให้:
+- หา Python 3.10 ขึ้นไปที่ติดตั้งให้ทุกคน (all users) ถ้าไม่มีจะลง Python 3.12 ให้ (Python ที่ติดตั้งแบบรายผู้ใช้จะไม่ถูกนับ เพราะ engine ที่รันในนาม SYSTEM ใช้ไม่ได้)
+- ติดตั้ง `pyodbc` ให้ทั้งเครื่อง (ถ้าไม่สำเร็จจะเตือนแล้วติดตั้งต่อ งานอื่นยังใช้ได้ปกติ ยกเว้นงาน `sql` กับ SQL Server)
+- คัดลอกโปรแกรมไปที่ `C:\Orch`, สร้าง `orch.db`, ลงทะเบียน engine ของคิว `default` แบบเปิดตอนบูต และสั่งเริ่มทันที
+- สร้างไอคอน **Orch** บน Desktop และใน Start menu สำหรับเปิด GUI
+- เพิ่ม `C:\Orch` ลง PATH ของเครื่อง (เปิดหน้าต่าง cmd หรือ PowerShell ใหม่แล้วพิมพ์ `orch query` ได้เลย)
+
+| ต้องการ | ทำอย่างไร |
+|---|---|
+| ติดตั้งที่อื่น | `setup.bat -InstallDir D:\Orch` |
+| เพิ่มคิวสำหรับงาน UI automation | `setup.bat -Queue ui -Trigger logon` (ลงทะเบียนให้ user ที่รัน setup) |
+| อัปเดตเป็นเวอร์ชันใหม่ | แตก zip ใหม่แล้วรัน `setup.bat` ทับ ระบบจะหยุด engine แบบปลอดภัยก่อน และไม่แตะ `orch.db` |
+| เครื่องไม่มีอินเทอร์เน็ต | วาง `python-3.12.x-amd64.exe` และ `pyodbc-*-cp312-*-win_amd64.whl` ไว้ข้าง `setup.bat` ก่อนรัน |
+| ถอนการติดตั้ง | ดับเบิลคลิก `C:\Orch\uninstall.bat` (ลบ task, ไอคอน และ PATH แต่เก็บ `C:\Orch` และ `orch.db` ไว้) |
+| สร้าง zip ไปติดตั้งเครื่องอื่น | รัน `package.bat` บนเครื่องที่มี git จะได้ `dist\Orch-<วันที่>.zip` |
+
+log ของการติดตั้งอยู่ที่ `C:\Orch\logs\setup-<เวลา>.log`
+
+### 1.2 ติดตั้งเอง
+
 1. ติดตั้ง **Python 3.10 ขึ้นไป (แนะนำ 3.12)** จาก python.org โดยเลือก **Customize installation** แล้วติ๊ก
    **"Install Python for all users"** และ **"Add Python to environment variables"**
    (engine ที่เปิดตอนบูตรันในนาม SYSTEM จึงต้องมองเห็น Python และ package ที่ติดตั้งไว้ ห้ามติดตั้งแบบรายผู้ใช้)
@@ -280,6 +306,9 @@ python orch.py engine --queue default       :: หรือ orch_engine.bat defa
 - ถ้ามีหลายคิว ต้องเปิด engine แยกตัวละคิว: `orch_engine.bat default`, `orch_engine.bat ui`
 
 ### 9.2 ตั้งให้ engine เปิดเองตอนเปิดเครื่อง (แนะนำสำหรับเครื่องที่ใช้งานจริง)
+> ถ้าติดตั้งด้วย `setup.bat` ขั้นตอนนี้ทำให้แล้ว (คิว `default` แบบ boot) และใช้ `setup.bat -Queue Q -Trigger boot|logon` เพื่อเพิ่มคิวได้
+> ส่วนขั้นตอนข้างล่างใช้เมื่อติดตั้งเอง
+
 1. เปิด **Command Prompt แบบ Run as administrator**
 2. ดูสคริปต์ก่อน (ยังไม่ติดตั้งอะไร):
    ```cmd
@@ -443,6 +472,12 @@ exit code: 0 = สำเร็จ, 2 = ข้อมูลผิดหรือ�
 | `sql`: `'GO' batch separators are not supported` | สคริปต์มี `GO` | แยกเป็นหลายงานแล้วต่อด้วย `--after` |
 | `http`: `request failed` | DNS, firewall หรือ proxy | ลองใส่ `no_proxy` และทดสอบ URL จากเครื่องเดียวกัน |
 | `install-startup --apply` ล้มเหลว | ไม่ได้เปิดแบบ Administrator | เปิด Command Prompt ด้วย Run as administrator |
+| ดับเบิลคลิก `setup.bat` แล้วไม่มีอะไรเกิดขึ้น | กด No ที่ UAC หรือ account ไม่มีสิทธิ์ Administrator | รันใหม่แล้วกด Yes หรือให้ผู้ดูแลเครื่องรันให้ |
+| setup: `ไม่พบ Python และเครื่องนี้ไม่มี winget` | Windows รุ่นเก่าหรือถูกปิด winget | วาง `python-3.12.x-amd64.exe` ไว้ข้าง `setup.bat` แล้วรันใหม่ |
+| setup: winget ล้มเหลว | ไม่มีอินเทอร์เน็ตหรือติด proxy | ใช้ตัวติดตั้ง Python แบบ offline ตามด้านบน |
+| setup: `ติดตั้ง pyodbc ไม่สำเร็จ` | ไม่มีอินเทอร์เน็ต | วางไฟล์ `pyodbc-*.whl` ไว้ข้าง `setup.bat` แล้วรันใหม่ (จำเป็นเฉพาะงาน `sql` กับ SQL Server) |
+| setup ล้มกลางทางตอนอัปเดต | ดูขั้นที่ล้มใน `logs\setup-*.log` | สคริปต์เปิด engine เดิมกลับให้แล้ว แก้สาเหตุแล้วรัน `setup.bat` ใหม่ |
+| PowerShell ปฏิเสธการรันสคริปต์ | นโยบายองค์กร (Group Policy) บังคับ ExecutionPolicy | ให้ IT อนุญาต หรือใช้วิธี[ติดตั้งเอง](#12-ติดตั้งเอง) |
 | GUI เปิดไม่ขึ้นเมื่อดับเบิลคลิก `orch_gui.py` | Windows เปิดไฟล์ด้วย editor | ใช้ `orch_gui.bat` แทน |
 | งาน `.bat` ที่เปิดโปรแกรมอื่นถูก kill แล้วโปรแกรมนั้นยังค้าง | เกิดได้เฉพาะช่วงสั้น ๆ ทันทีที่งานเริ่ม | kill เองใน Task Manager (ปกติระบบใช้ Job Object ฆ่าลูกหลานทั้งหมดให้แล้ว) |
 

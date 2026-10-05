@@ -19,13 +19,17 @@ python orch.py engine --queue default                 # run one queue's engine
 python orch.py stop-engine --queue default            # graceful stop via the DB (works for pythonw/boot engines)
 python orch_gui.py                                    # GUI
 python orch.py install-startup --queue default --trigger boot   # prints the Register-ScheduledTask script (--apply runs it)
+setup.bat [-InstallDir C:\Orch] [-Queue Q -Trigger boot|logon]   # one-click install/update (UAC); uninstall.bat keeps data
+package.bat                                           # dist\Orch-<date>.zip of the committed files (git archive)
 python -m unittest discover -s tests -p "test_*.py"   # all tests (run from repo root)
 cd tests && python -m unittest test_06_finalize       # one module
 cd tests && python -m unittest test_08_engine.TestEngine.test_graceful_shutdown_requeues   # one test
 ```
 
 `start_orch.bat` / `orch_engine.bat` / `orch_gui.bat` / `orch.bat` are end-user launchers. Keep them
-ASCII with CRLF line endings (`test_11_install` checks this). The user-facing docs are in Thai: `README.md`,
+ASCII with CRLF line endings, and `setup.ps1` / `uninstall.ps1` UTF-8 **with BOM** + CRLF (PowerShell 5.1 reads BOM-less
+files as ANSI, which garbles their Thai messages); `test_11_install` checks both. The installer scripts must only call `orch.py`
+verbs (`init`, `stop-engine`, `install-startup --apply`) and contain no Orch logic of their own. The user-facing docs are in Thai: `README.md`,
 `docs/MANUAL.md` (usage/config) and `docs/TECHNICAL.md` (internals, constants, exit codes, deviations from SPEC).
 Update them when behavior, flags or constants change.
 
