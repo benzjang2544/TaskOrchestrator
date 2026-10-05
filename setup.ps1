@@ -144,9 +144,11 @@ try {
     $Pyw = Join-Path $PyDir 'pythonw.exe'
 
     Step 'ติดตั้ง pyodbc (ใช้กับงาน sql ที่ต่อ SQL Server)'
-    $code = Invoke-Exe $script:Py @('-m', 'pip', 'install', '--disable-pip-version-check', '--no-warn-script-location',
+    # -s ignores this user's own site-packages: otherwise a per-user pyodbc makes pip say "already satisfied"
+    # and skip the machine-wide install that the SYSTEM engine needs
+    $code = Invoke-Exe $script:Py @('-s', '-m', 'pip', 'install', '--disable-pip-version-check', '--no-warn-script-location',
         '--timeout', '15', '--retries', '1', '--find-links', $Src, 'pyodbc') -OkCodes (0..255)
-    $where = Get-PyOutput @('-c', 'import sys, pyodbc; print(pyodbc.__file__.lower().startswith(sys.prefix.lower()))')
+    $where = Get-PyOutput @('-s', '-c', 'import sys, pyodbc; print(pyodbc.__file__.lower().startswith(sys.prefix.lower()))')
     $pyodbcOk = ($where -eq 'True')
     if ($pyodbcOk) {
         Ok 'pyodbc พร้อมใช้ (ติดตั้งให้ทั้งเครื่อง)'
