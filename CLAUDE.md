@@ -16,6 +16,7 @@ SPEC §11 lists risks that must be reported to the user immediately if encounter
 ```sh
 python orch.py init                                   # create DB (default ./orch.db; --db PATH or ORCH_DB)
 python orch.py engine --queue default                 # run one queue's engine
+python orch.py stop-engine --queue default            # graceful stop via the DB (works for pythonw/boot engines)
 python orch_gui.py                                    # GUI
 python orch.py install-startup --queue default --trigger boot   # prints the Register-ScheduledTask script (--apply runs it)
 python -m unittest discover -s tests -p "test_*.py"   # all tests (run from repo root)
@@ -62,11 +63,14 @@ block Winsock make them fail.
 - **Engine** (`run_engine`): lock → `recover` (Running runs of a dead engine → "engine lost", no auto-kill)
   → `fire_startup` → `SchedulerThread` (own connection: schedule tick every 1 s, lock heartbeat every 5 s,
   hourly prune) + main-thread worker loop (`process_one`). Logs go to stdout and `logs/engine-<queue>.log`
-  next to the DB.
+  next to the DB. Graceful stop = `stop` event, set by a signal or by `stop-engine`: `request_engine_stop` sets
+  `engine_lock.stop_requested` (schema v2; `init_db` migrates v1 in place), and the scheduler thread's
+  `check_stop` sees it within 1 s. A pythonw engine has no console, so `stop-engine` is its only graceful stop.
 - **install-startup**: `build_startup_script` generates PowerShell `Register-ScheduledTask` (never `schtasks`: its
   72-hour ExecutionTimeLimit would kill the engine). The script launches `pythonw.exe orch.py --db <abs path> engine`,
-  so a SYSTEM/boot engine uses the same DB.
-- **CLI**: argparse verbs mirror `schtasks`; `OrchError` → exit code 2; engine lock held → exit code 3.
+  so a SYSTEM/boot engine uses the same DB. Besides the boot/logon trigger, a second trigger repeats every
+  `ENGINE_RELAUNCH_MIN` (5) minutes to relaunch a dead engine (IgnoreNew + engine lock make that harmless).
+- **CLI**: argparse verbs mirror `schtasks`; `OrchError` → exit code 2; engine lock held → exit code 3; lock lost while running → exit code 4.
 
 ## GUI (orch_gui.py)
 
@@ -74,6 +78,6 @@ tkinter; must only call functions in `orch.py`, with no business logic of its ow
 - The 2-second refresh uses `sync_tree()`, which updates Treeview rows in place keyed by stable iids
   (`job-<id>`, run id), so selection and scroll position survive a refresh. `App.refresh()` does one pass;
   `_tick()` owns the `after()` loop, so calling `refresh()` never starts a second loop.
-- `App.error` / `App.confirm` wrap the messageboxes, and `App.call()` turns `OrchError` into `error()`. Tests
+- `App.error` / `App.confirm` wrap the messageboxes, and `App.call()` turns `OrchError` / `sqlite3.Error` into `error()`. Tests
   override these and drive the App without `mainloop` (`auto_refresh=False`).
 - When editing a job, the dialog passes `schedules=None` if the schedule text is unchanged, so `next_run_at` isn't reset.

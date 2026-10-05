@@ -36,7 +36,7 @@ Orch เป็นตัวตั้งเวลารันงานแทน Wi
 | หลักการ | รายละเอียด |
 |---|---|
 | Serial queue | งานในคิวเดียวกันรันทีละงานเสมอ คิวต่างกันรันขนานกันได้ (คนละ engine คนละโปรเซส) |
-| Stdlib only | Python 3.10+ ใช้เฉพาะ standard library (`pyodbc` จำเป็นเฉพาะ `sql` ที่ไม่ใช่ sqlite) |
+| Stdlib only | Python 3.10+ (แนะนำ 3.12 แบบ all users) ใช้เฉพาะ standard library (`pyodbc` จำเป็นเฉพาะ `sql` ที่ไม่ใช่ sqlite) |
 | ฐานข้อมูลเดียว | SQLite โหมด WAL ไฟล์เดียว (`orch.db`) ใช้ร่วมกันระหว่าง CLI, GUI และ engine ทุกตัว |
 | ทุกงานเป็นโปรเซสลูก | ทำให้ timeout, cancel และ kill ใช้กลไกเดียวกันทุกชนิดงาน |
 | ไม่มี service ของตัวเอง | ใช้ Task Scheduler เป็นแค่ตัวเปิด engine ตอน boot หรือตอน logon |
@@ -85,13 +85,13 @@ Orch เป็นตัวตั้งเวลารันงานแทน Wi
 |---|---|
 | Time helpers | `now_dt`, `now_str`, `fmt_ts`, `parse_ts`, `add_seconds` |
 | Schedules | `CronExpr`, `parse_every`, `validate_schedule`, `next_fire`, `initial_next_run`, `parse_schedule_line`, `format_schedule` |
-| Database | `SCHEMA`, `db_path`, `connect`, `tx`, `init_db`, `_Cursor`, `_Connection` |
-| Job definitions | `validate_params`, `parse_expect`, `create_job`, `update_job`, `set_enabled`, `delete_job`, `get_job`, `list_jobs` |
+| Database | `SCHEMA`, `SCHEMA_VERSION`, `db_path`, `connect`, `tx`, `init_db` (สร้างตารางและ migrate), `_Cursor`, `_Connection` |
+| Job definitions | `validate_params`, `parse_expect`, `create_job`, `update_job`, `set_enabled`, `_reanchor_schedules`, `delete_job`, `get_job`, `list_jobs` |
 | Runs | `_enqueue`, `enqueue`, `claim_next`, `set_paused`, `is_paused`, `cancel_run`, `list_runs`, `get_run`, `get_logs`, `add_log` |
 | Executor | `build_command`, `default_encoding`, `execute_process`, `_supervise`, `_reader`, `_flush_logs`, `kill_tree`, `WinJob`, `pid_alive` |
 | Lifecycle | `run_job`, `finalize`, `requeue`, `process_one` |
 | Scheduler | `scheduler_tick`, `_fire_schedule`, `fire_startup`, `prune`, `SchedulerThread` |
-| Engine | `acquire_lock`, `heartbeat_lock`, `release_lock`, `engine_states`, `recover`, `setup_engine_logging`, `run_engine` |
+| Engine | `acquire_lock`, `heartbeat_lock`, `release_lock`, `request_engine_stop`, `engine_stop_requested`, `engine_states`, `recover`, `setup_engine_logging`, `run_engine` |
 | `_exec` | `exec_main`, `exec_sql`, `exec_http`, `resolve_secret`, `split_sqlite_statements`, `redact_url` |
 | install-startup | `build_startup_script`, `engine_executable`, `startup_task_name`, `cmd_install_startup` |
 | CLI | `build_parser`, `cmd_*`, `main` |
@@ -101,7 +101,13 @@ Orch เป็นตัวตั้งเวลารันงานแทน Wi
 
 ## 4. Data model
 
-schema อยู่ในตัวแปร `SCHEMA` และถูกสร้างอัตโนมัติเมื่อ `connect()` พบว่า `PRAGMA user_version` น้อยกว่า `SCHEMA_VERSION` (ปัจจุบันคือ 1)
+schema อยู่ในตัวแปร `SCHEMA` และถูกสร้างอัตโนมัติเมื่อ `connect()` พบว่า `PRAGMA user_version` น้อยกว่า `SCHEMA_VERSION` (ปัจจุบันคือ 2)
+
+`init_db` ทำงานใน transaction เดียว: สร้างตารางที่ยังไม่มี (`IF NOT EXISTS`) แล้ว migrate ทีละขั้นแบบตรวจก่อนทำ จึงเรียกซ้ำได้
+และปลอดภัยถ้าหลายโปรเซสเปิด DB เก่าพร้อมกัน
+- v1 → v2: `ALTER TABLE engine_lock ADD COLUMN stop_requested` (ตรวจด้วย `PRAGMA table_info` ก่อน)
+
+engine รุ่นเก่า (v1) ยังใช้ DB v2 ได้ เพราะ `acquire_lock` ระบุชื่อคอลัมน์ และคอลัมน์ใหม่มีค่าเริ่มต้นเป็น 0
 
 ### `job_def` — นิยามงาน
 
@@ -146,7 +152,8 @@ index: `(queue, status, priority, scheduled_at, id)` สำหรับการ
 ### ตารางอื่น
 - `run_log(id, run_id, ts, level, message)` index `(run_id, id)` โดย `level` เป็น `INFO` / `WARN` / `OUT` (output ของงาน)
 - `queue_state(name, paused)` เก็บสถานะ pause ของแต่ละคิว
-- `engine_lock(queue, host, pid, heartbeat)` เก็บ engine ที่ถือคิวอยู่
+- `engine_lock(queue, host, pid, heartbeat, stop_requested)` เก็บ engine ที่ถือคิวอยู่ ส่วน `stop_requested=1` คือมีคำขอให้ engine ตัวนั้นหยุด
+  (`acquire_lock` ใช้ `INSERT OR REPLACE` engine ตัวใหม่จึงเริ่มด้วย 0 เสมอ)
 
 เวลาทั้งหมดเก็บเป็นข้อความ `YYYY-MM-DD HH:MM:SS` ตามเวลาท้องถิ่นแบบไม่มี timezone จึงเปรียบเทียบใน SQL แบบ string ได้โดยตรง
 
@@ -202,7 +209,7 @@ index: `(queue, status, priority, scheduled_at, id)` สำหรับการ
 4. **`recover`** จัดการงานของคิวนี้ที่ค้าง `Running` (engine ก่อนหน้าตาย): log WARN, ถ้า pid ยังมีชีวิตจะ WARN ให้ตรวจสอบเอง
    (**ไม่ kill ให้** เพราะเลข pid อาจถูกนำไปใช้ซ้ำ) แล้ว `finalize(..., "engine lost")` ตามกติกา retry ปกติ
 5. **`fire_startup`** นำงานที่มี schedule แบบ `startup` เข้าคิว
-6. เริ่ม **`SchedulerThread`** ซึ่งใช้ connection ของตัวเอง ทุก 1 วินาทีจะเรียก `scheduler_tick`, ทุก 5 วินาทีเรียก `heartbeat_lock`
+6. เริ่ม **`SchedulerThread`** ซึ่งใช้ connection ของตัวเอง ทุก 1 วินาทีจะเรียก `check_stop` และ `scheduler_tick`, ทุก 5 วินาทีเรียก `heartbeat_lock`
    และทุกชั่วโมงเรียก `prune`
 7. **worker loop** ใน main thread เรียก `process_one` ซ้ำ ๆ ถ้าไม่มีงานจะรอ `poll` วินาที
 
@@ -213,6 +220,17 @@ engine จะหยุดตัวเองและออกด้วย exit c
 
 **Graceful shutdown:** เมื่อได้รับ signal จะตั้ง `stop` event ทำให้ worker ไม่หยิบงานใหม่ ถ้ามีงานรันอยู่จะ kill process tree
 แล้ว `requeue` งานกลับเป็น `Pending` (ล้าง `started_at`/`pid` และไม่นับเป็น attempt) พร้อม WARN จากนั้นรอ scheduler thread จบและลบแถว lock
+
+**`stop-engine`:** engine ที่ Task Scheduler เปิดด้วย `pythonw.exe` ไม่มี console จึงรับ Ctrl+C หรือ CTRL_BREAK ไม่ได้
+ทางเดียวที่จะหยุดแบบ graceful คือผ่าน DB:
+`request_engine_stop` ตั้ง `engine_lock.stop_requested=1` (ถ้าไม่มี lock หรือ heartbeat เก่ากว่า 30 วินาที จะ raise `OrchError`)
+แล้ว `check_stop` ใน scheduler thread อ่าน flag ของ lock ตัวเอง (`engine_stop_requested`, `WHERE queue/pid/host`) ทุก tick
+ถ้าเจอจะ log `stop requested (stop-engine)` แล้วตั้ง `stop` event จึงเข้าเส้นทาง graceful shutdown เดิมทั้งหมด (exit code 0)
+ส่วน `cmd_stop_engine` รอจนแถว lock ของ engine ตัวนั้น (host/pid เดิม) หายไป ถ้าเกิน `--wait` จะ exit 2
+
+**การปิดแบบกะทันหัน** (End ใน Task Scheduler, `Stop-ScheduledTask`, kill ใน Task Manager, reboot) ใช้ `TerminateProcess`
+engine จึงไม่มีโอกาส requeue งานที่รันอยู่ งานนั้นจะถูก `recover` ตั้งเป็น `engine lost` ตอนเปิดครั้งถัดไป ส่วนโปรเซสของงาน
+ซึ่งอยู่ใน process group และ Job Object ของตัวเอง (ไม่มี KILL_ON_JOB_CLOSE) อาจรันต่อ
 
 **Engine error:** ถ้าเกิด exception ที่ไม่คาดคิดระหว่างรันงาน (เช่น DB ใช้ไม่ได้ชั่วคราว) `_supervise` จะ kill process tree ก่อน
 แล้ว `process_one` ปิด run ด้วย `engine error: <รายละเอียด>` ตามกติกา retry คิวจึงไม่มีงานรันซ้อนกัน
@@ -336,7 +354,10 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 
 - `App.refresh()` อ่านข้อมูลหนึ่งรอบ ส่วน `_tick()` เป็น loop ของ `after(2000)` การเรียก `refresh()` หลังบันทึกจึงไม่สร้าง loop ซ้ำ
 - `sync_tree()` อัปเดต Treeview **ในที่เดิม** โดยใช้ iid คงที่ (`job-<id>` หรือเลข run id) แถวที่เลือกไว้และตำแหน่ง scroll จึงไม่หาย
-- `App.call()` เรียกฟังก์ชันใน `orch.py` แล้วแปลง `OrchError` เป็น `App.error()` ทั้ง `App.error` และ `App.confirm` override ได้ใน test
+- `App.call()` เรียกฟังก์ชันใน `orch.py` แล้วแปลง `OrchError` และ `sqlite3.Error` (เช่น database is locked) เป็น `App.error()`
+  ทั้ง `App.error` และ `App.confirm` override ได้ใน test
+- ปุ่ม **Stop engine** (แท็บ Queue / Runs) ใช้ `target_queue()` แล้วถามยืนยันก่อนเรียก `request_engine_stop`
+  แถบบนแสดง `(stopping)` จาก `engine_states()[...]["stopping"]
 - `JobDialog`: เปลี่ยน template ของ params ตามชนิดงานเฉพาะเมื่อผู้ใช้ยังไม่ได้แก้ params
   ตอนแก้ไขงาน ถ้าข้อความ schedule ไม่เปลี่ยนจะส่ง `schedules=None` จึงไม่รีเซ็ต `next_run_at`
 - แท็บ Log ต่อท้ายเฉพาะบรรทัดใหม่ (`get_logs(after_id)`) และหยุดดึงเมื่อ run จบแล้ว
@@ -348,6 +369,11 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 - `New-ScheduledTaskAction -Execute <pythonw.exe> -Argument '"<orch.py>" --db "<orch.db>" engine --queue <Q>'`
   โดยใส่ `--db` เป็น path เต็มเสมอ engine ที่ Task Scheduler เปิด (เช่นในนาม SYSTEM) จึงใช้ DB ไฟล์เดียวกัน
 - `New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries`
+- trigger ที่สอง `$repeat = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 5)`
+  (ไม่ใส่ `-RepetitionDuration` จึงทำซ้ำไม่สิ้นสุด ทดสอบบน PowerShell 5.1 / Windows 10 แล้ว) และลงทะเบียนด้วย `-Trigger @($trigger, $repeat)`
+  เหตุผลคือ restart-on-failure (`RestartCount`) ไม่ครอบคลุมกรณีโปรเซสที่เริ่มสำเร็จแล้ว crash หรือถูก kill
+  ส่วนการเปิดซ้ำระหว่างที่ engine ยังรันอยู่ไม่มีผลเสีย เพราะ `MultipleInstances IgnoreNew` ทำให้ Task Scheduler ไม่เปิดตัวที่สอง
+  และถ้ามีตัวที่สองหลุดมาได้ engine lock ก็จะทำให้มันออกด้วย exit code 3
 - `boot`: `-AtStartup` + principal `SYSTEM` (ServiceAccount, Highest) หรือ `--user` ซึ่งจะถามรหัสผ่านด้วย `Get-Credential` ตอนรัน
 - `logon`: `-AtLogOn -User <user>` + principal แบบ Interactive
 - ชื่อ task คือ `Orch Engine (<queue>)` ถ้าไม่ใส่ `--apply` จะแค่พิมพ์สคริปต์ออกมา ถ้าใส่จะเขียนเป็นไฟล์ `.ps1` ชั่วคราว รันด้วย
@@ -370,18 +396,19 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 | `LOCK_STALE_SEC` | 30 s | heartbeat ของ lock เก่ากว่านี้ถือว่า engine ตายแล้ว |
 | `SchedulerThread.TICK` / `PRUNE_EVERY` | 1 s / 3600 s | ความถี่ของ scheduler / prune |
 | `EXEC_MAX_ROWS` / `HTTP_MAX_BODY_CHARS` | 200 / 4000 | แถว SQL ที่พิมพ์ต่อชุด / ความยาว body ของ http ที่ log |
+| `ENGINE_RELAUNCH_MIN` | 5 นาที | ช่วงของ trigger ที่ทำซ้ำใน install-startup |
 | `REFRESH_MS` / `RUNS_LIMIT` (GUI) | 2000 / 200 | ความถี่ refresh / จำนวน run ที่แสดง |
 
 | Exit code | ความหมาย |
 |---|---|
 | 0 | สำเร็จ |
-| 2 | input ผิด หรือหา job/run ไม่เจอ (`OrchError` และ error ของ argparse) |
+| 2 | input ผิด หรือหา job/run ไม่เจอ (`OrchError` และ error ของ argparse) รวมถึง `stop-engine` ที่ไม่มี engine รันอยู่ หรือ engine ไม่หยุดภายใน `--wait` |
 | 3 | `engine`: มี engine ของคิวนี้รันอยู่แล้ว |
 | 4 | `engine`: lock ถูก engine อื่นยึดไประหว่างทำงาน |
 
 ## 17. การทดสอบ
 
-- ใช้ `unittest` (stdlib) รันด้วย `python -m unittest discover -s tests -p "test_*.py"` (125 test ใช้เวลาประมาณ 75 วินาที)
+- ใช้ `unittest` (stdlib) รันด้วย `python -m unittest discover -s tests -p "test_*.py"` (135 test ใช้เวลาประมาณ 70 วินาที)
 - `tests/helpers.py`: `DBTestCase` สร้างโฟลเดอร์ชั่วคราวและ `ORCH_DB` แยกให้แต่ละ test มี `cli()`, `start_engine()` (เปิด engine เป็น subprocess จริง),
   `stop_engine()` (CTRL_BREAK หรือ SIGTERM), `wait_until()` และ `py_cmd()`
 - งานใน test ใช้ `sys.executable -c "..."` จึงรันได้ทุก OS
@@ -409,9 +436,13 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 | เรื่อง | พฤติกรรม | เหตุผล |
 |---|---|---|
 | ลบงานที่มีงานอื่นอ้างถึงใน `after_job` | ปฏิเสธ | SPEC ไม่ได้กำหนดไว้ และการปล่อยให้ chain ชี้ไปที่งานที่ไม่มีอยู่แย่กว่า |
-| เปิดงานกลับหลัง disable | คำนวณ `next_run_at` ใหม่จากเวลาปัจจุบัน | ช่วงที่ปิดงานไว้ไม่ควรนับเป็นรอบที่พลาด |
+| เปิดงานกลับหลัง disable | คำนวณ `next_run_at` ใหม่จากเวลาปัจจุบัน (ทั้ง `set_enabled` และ `update_job` เช่น checkbox ใน dialog ของ GUI) | ช่วงที่ปิดงานไว้ไม่ควรนับเป็นรอบที่พลาด |
 | Windows Job Object | ใช้ร่วมกับ `taskkill` ตอน kill | ผู้ใช้อนุมัติหลังพบความเสี่ยงตาม §11 (โปรเซสหลานหลุดจาก tree) |
 | Engine error | kill tree แล้ว finalize เป็นล้มเหลว | รักษาการรันทีละงาน (§2) |
+| `stop-engine` + `engine_lock.stop_requested` (schema v2) | หยุด engine แบบ graceful ผ่าน DB | engine ที่ติดตั้งไว้ (pythonw) รับ signal ไม่ได้ ผู้ใช้อนุมัติแล้ว (เปลี่ยน data model §3) |
+| Trigger ที่ทำซ้ำทุก 5 นาทีใน install-startup | เพิ่มจาก `-AtStartup`/`-AtLogOn` | restart-on-failure ไม่ครอบคลุม engine ที่ crash หรือถูก kill ผู้ใช้อนุมัติแล้ว |
+| เปลี่ยน queue ของ job | ย้าย run ที่ยัง `Pending` ไปคิวใหม่ด้วย | ถ้าไม่ย้าย run อาจค้างอยู่ในคิวที่ไม่มี engine |
+| `--desc ""` / ลบ description ใน GUI | ล้างค่าเป็น NULL | ทำแบบเดียวกับ `--after ""` |
 | `--db` (global flag) | กำหนด DB ได้จาก command line | ให้ task ใน Task Scheduler อ้าง DB ไฟล์เดียวกันได้แน่นอน |
 | http: userinfo ใน URL | แปลงเป็น Basic auth และตัดออกจาก log | urllib ไม่รองรับ userinfo และป้องกันรหัสผ่านหลุดลง log |
 | `_Cursor.fetchone` ปิด cursor | ป้องกัน snapshot ค้าง | connection ที่เปิดนานต้องเห็นการเขียนจากโปรเซสอื่น |
@@ -420,6 +451,7 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 ## 19. ข้อจำกัดที่รู้
 
 - ไม่รองรับ DST (เวลาท้องถิ่นแบบไม่มี timezone)
+- การปิด engine แบบกะทันหัน (End task, kill หรือ reboot) ทำให้งานที่รันอยู่จบเป็น `engine lost` และโปรเซสของงานอาจค้างต่อ ต้องใช้ `stop-engine` ถ้าจะปิดแบบปลอดภัย
 - DB ต้องอยู่บน local disk (WAL ใช้บน network share ไม่ได้)
 - งานต้อง idempotent เพราะมี retry และการกู้คืน (`engine lost`)
 - `sql` ไม่รองรับ `GO` และ `pyodbc` ยังไม่ได้ทดสอบกับ SQL Server จริง

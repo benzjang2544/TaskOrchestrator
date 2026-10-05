@@ -26,7 +26,9 @@
 
 ## 1. ติดตั้ง
 
-1. ติดตั้ง **Python 3.10 ขึ้นไป** จาก python.org และติ๊ก **"Add python.exe to PATH"** ตอนติดตั้ง
+1. ติดตั้ง **Python 3.10 ขึ้นไป (แนะนำ 3.12)** จาก python.org โดยเลือก **Customize installation** แล้วติ๊ก
+   **"Install Python for all users"** และ **"Add Python to environment variables"**
+   (engine ที่เปิดตอนบูตรันในนาม SYSTEM จึงต้องมองเห็น Python และ package ที่ติดตั้งไว้ ห้ามติดตั้งแบบรายผู้ใช้)
 2. คัดลอกโฟลเดอร์ Orch ไปไว้บน **ดิสก์ในเครื่อง** เช่น `C:\Orch` (**ห้ามไว้บน network share**)
 3. เปิด Command Prompt แล้วสั่ง:
    ```cmd
@@ -34,7 +36,8 @@
    python orch.py init
    ```
    ถ้าขึ้น `initialized C:\Orch\orch.db` แปลว่าพร้อมใช้
-4. (ถ้าจะใช้งาน SQL กับ SQL Server) `pip install pyodbc` และติดตั้ง *ODBC Driver for SQL Server*
+4. (ถ้าจะใช้งาน SQL กับ SQL Server) ใน Command Prompt แบบ Administrator สั่ง `python -m pip install pyodbc` (ห้ามใช้ `--user`)
+   และติดตั้ง *ODBC Driver for SQL Server*
 
 ## 2. เริ่มใช้งานใน 5 นาที
 
@@ -238,7 +241,7 @@ python orch.py logs 123 --follow              :: ดู log ต่อเนื�
 `dedup(skip): มีงานรออยู่แล้ว #id`, `coalesced by #id`, `job disabled` และ `definition deleted`
 
 ### GUI
-- **แถบบน**: สถานะ engine ของแต่ละคิว (● running / ○ stopped) และบอกถ้าคิวถูก pause
+- **แถบบน**: สถานะ engine ของแต่ละคิว (● running / ○ stopped, `(stopping)` ระหว่างที่กำลังหยุด) และบอกถ้าคิวถูก pause
 - **แท็บ Queue / Runs**: 200 run ล่าสุด กรองด้วยช่อง Status และ Queue ได้ ดับเบิลคลิก (หรือกด Open log) เพื่อดู log
 - **แท็บ Log**: ถ้างานยังรันอยู่ log ใหม่จะต่อท้ายเองทุก 2 วินาที บรรทัด WARN เป็นสีส้ม
 
@@ -255,6 +258,7 @@ python orch.py logs 123 --follow              :: ดู log ต่อเนื�
 | ลบงาน | `delete ชื่องาน` | Jobs → Delete |
 | หยุดคิวชั่วคราว | `pause --queue Q` | เลือก Queue ในช่องกรอง (หรือเลือก run) → Pause queue |
 | เดินคิวต่อ | `resume --queue Q` | Resume queue |
+| หยุด engine อย่างปลอดภัย | `stop-engine --queue Q` | เลือก Queue → Stop engine |
 | ล้างประวัติเก่า | `prune --days 30` | — |
 
 - **ยกเลิก:** run ที่ยัง `Pending` จะถูกยกเลิกทันที ส่วนที่ `Running` จะถูก kill ภายในประมาณ 2 วินาที
@@ -269,7 +273,9 @@ python orch.py logs 123 --follow              :: ดู log ต่อเนื�
 ```cmd
 python orch.py engine --queue default       :: หรือ orch_engine.bat default
 ```
-- หยุดด้วย **Ctrl+C** ถ้ามีงานกำลังรัน งานจะถูก kill แล้วคืนกลับเป็น `Pending` (ไม่นับเป็นการล้มเหลว) และจะรันใหม่เมื่อเปิด engine
+- หยุดด้วย **Ctrl+C** หรือ `python orch.py stop-engine --queue default` (สั่งจากหน้าต่างอื่นหรือจากปุ่ม Stop engine ใน GUI ก็ได้)
+  ถ้ามีงานกำลังรัน งานจะถูก kill แล้วคืนกลับเป็น `Pending` (ไม่นับเป็นการล้มเหลว) และจะรันใหม่เมื่อเปิด engine
+- `stop-engine` รอให้ engine หยุดจริงไม่เกิน 60 วินาที (เปลี่ยนได้ด้วย `--wait SEC` และ `--wait 0` คือไม่รอ)
 - ถ้าเปิด engine ของคิวเดียวกันซ้ำ ตัวที่สองจะออกทันทีด้วยข้อความ `already running`
 - ถ้ามีหลายคิว ต้องเปิด engine แยกตัวละคิว: `orch_engine.bat default`, `orch_engine.bat ui`
 
@@ -287,6 +293,7 @@ python orch.py engine --queue default       :: หรือ orch_engine.bat defa
 4. ตรวจผล: เปิด Task Scheduler จะมี task ชื่อ **Orch Engine (default)** หรือใน PowerShell:
    ```powershell
    (Get-ScheduledTask 'Orch Engine (default)').Settings.ExecutionTimeLimit    # ต้องได้ PT0S
+   (Get-ScheduledTask 'Orch Engine (default)').Triggers.Count                 # ต้องได้ 2
    Start-ScheduledTask 'Orch Engine (default)'                               # เริ่มทันทีโดยไม่ต้องรีสตาร์ท
    ```
 
@@ -300,7 +307,23 @@ python orch.py engine --queue default       :: หรือ orch_engine.bat defa
 - **งาน UI automation** ให้แยกไว้คิวของตัวเอง (เช่น `ui`) แล้วใช้ `--trigger logon` เครื่องต้องตั้ง auto-login และห้าม lock หน้าจอ
   ห้ามใช้ `boot` กับงานประเภทนี้
 - engine ที่เปิดจาก Task Scheduler ไม่มีหน้าต่าง ให้ดู log ที่ `logs\engine-<คิว>.log` หรือดูสถานะที่แถบบนของ GUI
-- ถ้า engine ตาย Task Scheduler จะเปิดให้ใหม่ภายใน 1 นาที และ task ไม่มีเวลาหมดอายุ (ไม่ถูกหยุดที่ 72 ชั่วโมง)
+- task มี trigger สองตัว: ตอนบูต (หรือตอน logon) และอีกตัวที่ทำซ้ำทุก 5 นาที ถ้า engine ตาย (crash หรือถูก kill) จะถูกเปิดใหม่ภายใน 5 นาที
+  ระหว่างที่ engine ยังรันอยู่ การเปิดซ้ำจะถูกข้าม และ task ไม่มีเวลาหมดอายุ (ไม่ถูกหยุดที่ 72 ชั่วโมง)
+- **การหยุด engine ที่ติดตั้งไว้**
+  - หยุดชั่วคราว (เช่น ให้ engine อ่านตัวแปรแวดล้อมใหม่): `python orch.py stop-engine --queue default` แล้ว engine จะกลับมาเองภายใน 5 นาที
+    (หรือสั่ง `Start-ScheduledTask 'Orch Engine (default)'` ทันที)
+  - หยุดถาวร หรือตอนอัปเดตไฟล์ `orch.py`: ใช้ PowerShell แบบ Administrator
+    ```powershell
+    Disable-ScheduledTask 'Orch Engine (default)'      # กันไม่ให้ trigger ที่ทำซ้ำเปิด engine ใหม่
+    python C:\Orch\orch.py stop-engine --queue default
+    # ... อัปเดตไฟล์ ...
+    Enable-ScheduledTask 'Orch Engine (default)'; Start-ScheduledTask 'Orch Engine (default)'
+    ```
+  - **อย่าใช้ End ใน Task Scheduler, `Stop-ScheduledTask` หรือ kill ใน Task Manager** เพราะเป็นการหยุดแบบกะทันหัน
+    งานที่รันอยู่จะจบเป็น `engine lost` (นับเป็น attempt) และโปรเซสของงานอาจค้างต่อ ส่วนการ reboot ก็ให้ผลแบบเดียวกัน
+    จึงควรสั่ง `stop-engine` ก่อน reboot ถ้ามีงานสำคัญกำลังรัน
+- **PATH ของ SYSTEM:** งาน `command` ของ engine แบบ boot เห็นเฉพาะ PATH ระดับเครื่อง ไม่เห็น PATH ของ user
+  ให้ใส่ path เต็มของโปรแกรม (เช่น `"C:\Program Files\Python312\python.exe" C:\jobs\x.py`) หรือใช้งานชนิด `python` ซึ่งใช้ interpreter ตัวเดียวกับ engine
 - **ยกเลิกการติดตั้ง:** `Unregister-ScheduledTask -TaskName 'Orch Engine (default)' -Confirm:$false` (PowerShell แบบ Administrator)
 - ถ้าย้ายโฟลเดอร์ Orch หรือเปลี่ยนตำแหน่ง DB ต้องสั่ง `install-startup ... --apply` ใหม่ เพราะ task จำ path เดิมไว้
 
@@ -334,7 +357,8 @@ python orch.py engine --queue default       :: หรือ orch_engine.bat defa
   ```cmd
   setx /M SALES_DB "Driver={ODBC Driver 18 for SQL Server};Server=db01;Database=sales;Trusted_Connection=yes;Encrypt=no"
   ```
-  จากนั้น **รีสตาร์ท engine** (`Stop-ScheduledTask` แล้ว `Start-ScheduledTask`) เพราะ engine อ่าน environment ตอนเริ่มเท่านั้น
+  จากนั้น **รีสตาร์ท engine** (`python orch.py stop-engine --queue Q` แล้ว `Start-ScheduledTask` หรือรอไม่เกิน 5 นาที)
+  เพราะ engine อ่าน environment ตอนเริ่มเท่านั้น
 - ตัวแปรเฉพาะงานใส่ใน params `env` ได้ แต่ค่าจะถูกเก็บใน DB แบบข้อความธรรมดา
 - `query --json` แสดง params ทั้งหมด ควรจำกัดสิทธิ์การเข้าถึงโฟลเดอร์ Orch
 - log ของงาน `http` ตัด query string และ `user:password@` ออกจาก URL แล้ว
@@ -372,7 +396,7 @@ python orch.py logs $id --follow
     python orch.py create "ping-$_" --type http --url "https://$_.example.com/health" --every 5m
 }
 ```
-exit code: 0 = สำเร็จ, 2 = ข้อมูลผิดหรือหางานไม่เจอ, 3 = engine ของคิวนั้นรันอยู่แล้ว
+exit code: 0 = สำเร็จ, 2 = ข้อมูลผิดหรือหางานไม่เจอ, 3 = engine ของคิวนั้นรันอยู่แล้ว, 4 = lock ของ engine ถูกยึดไประหว่างทำงาน
 
 ## 12. ย้ายงานจาก Windows Task Scheduler
 
@@ -408,10 +432,13 @@ exit code: 0 = สำเร็จ, 2 = ข้อมูลผิดหรือ�
 | | งานอื่น priority สูงกว่าหรือรันนานอยู่ | ดูงานที่ `Running` ในคิวเดียวกัน |
 | schedule ไม่ทำงาน | งานถูก disable หรือ schedule `at` รันไปแล้ว | `query` ดูช่อง ENABLED และ NEXT RUN |
 | `error: job 'x' not found` ทั้งที่เพิ่งสร้าง | ใช้ DB คนละไฟล์ (เช่น ตั้ง `ORCH_DB` ในหน้าต่างเดียว) | ดู[หัวข้อ 10.1](#101-ตำแหน่งฐานข้อมูล) ล้างด้วย `set ORCH_DB=` |
-| engine ออกทันทีพร้อม `already running` | มี engine ของคิวนี้เปิดอยู่แล้ว (อาจเป็นตัวที่ Task Scheduler เปิดไว้) | ใช้ตัวเดิม หรือหยุดตัวเดิมก่อน ถ้า engine เดิมตายไปแล้ว lock จะหมดอายุเองใน 30 วินาที |
+| engine ออกทันทีพร้อม `already running` | มี engine ของคิวนี้เปิดอยู่แล้ว (อาจเป็นตัวที่ Task Scheduler เปิดไว้) | ใช้ตัวเดิม หรือหยุดตัวเดิมด้วย `stop-engine` ก่อน ถ้า engine เดิมตายไปแล้ว lock จะหมดอายุเองใน 30 วินาที |
+| `stop-engine`: `no running engine for queue` | ไม่มี engine ของคิวนั้นรันอยู่ (หรือตายไปแล้ว) | ดูแถบบนของ GUI ไม่ต้องทำอะไรเพิ่ม |
+| engine กลับมาเองหลัง `stop-engine` | trigger ที่ทำซ้ำทุก 5 นาทีของ task | `Disable-ScheduledTask` ก่อน (ดู[หัวข้อ 9.2](#92-ตั้งให้-engine-เปิดเองตอนเปิดเครื่อง-แนะนำสำหรับเครื่องที่ใช้งานจริง)) |
+| งาน `command` ใช้ได้ตอนรันเอง แต่ engine แบบ boot หาโปรแกรมไม่เจอ | SYSTEM ไม่เห็น PATH ของ user | ใส่ path เต็มของโปรแกรม |
 | run จบเป็น `Dead` ด้วย `engine lost` | engine ตายระหว่างงานรัน (ไฟดับ, ถูก kill) | ถ้ามี WARN ว่า pid ยังมีชีวิต ให้ตรวจใน Task Manager ว่างานเดิมยังรันอยู่หรือไม่ |
 | ภาษาไทยใน log เพี้ยน | encoding ไม่ตรงกับที่โปรแกรมเขียนออกมา | ดู[หัวข้อ 10.4](#104-ภาษาไทยและ-encoding) |
-| `sql`: `pyodbc is not installed` | ยังไม่ได้ติดตั้ง | `pip install pyodbc` (ด้วย Python ตัวเดียวกับที่รัน engine) |
+| `sql`: `pyodbc is not installed` | ยังไม่ได้ติดตั้ง หรือติดตั้งแบบ `--user` ซึ่ง SYSTEM มองไม่เห็น | `python -m pip install pyodbc` ใน prompt แบบ Administrator (ด้วย Python ตัวเดียวกับที่รัน engine) |
 | `sql`: `environment variable 'X' is not set` | ตัวแปรไม่อยู่ใน environment ของ engine | ดู[หัวข้อ 10.3](#103-ความลับ-connection-string-และตัวแปรแวดล้อม) แล้วรีสตาร์ท engine |
 | `sql`: `'GO' batch separators are not supported` | สคริปต์มี `GO` | แยกเป็นหลายงานแล้วต่อด้วย `--after` |
 | `http`: `request failed` | DNS, firewall หรือ proxy | ลองใส่ `no_proxy` และทดสอบ URL จากเครื่องเดียวกัน |
@@ -436,6 +463,7 @@ enable NAME | disable NAME | delete NAME
 pause [--queue Q] | resume [--queue Q]
 prune [--days N]                        ล้างประวัติ (ค่าเริ่มต้น 30 วัน)
 engine [--queue Q] [--poll 1.0]         รัน engine ของคิว
+stop-engine [--queue Q] [--wait SEC]    หยุด engine ของคิวอย่างปลอดภัย (งานที่รันอยู่กลับเป็น Pending)
 install-startup --queue Q --trigger boot|logon [--user U] [--apply]
 
 params : --command --file --args --cwd --conn --query --query-file --url --method

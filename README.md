@@ -4,7 +4,7 @@
 งานในคิวเดียวกันจะ **รันทีละงาน** ตามลำดับ priority มี retry, timeout พร้อม kill process tree, log ของทุกรอบการรัน
 และ dependency แบบ chain
 
-- Python 3.10+ **stdlib เท่านั้น** (`pyodbc` จำเป็นเฉพาะเมื่อใช้งานชนิด `sql` กับฐานข้อมูลที่ไม่ใช่ sqlite)
+- Python 3.10+ (แนะนำ 3.12) **stdlib เท่านั้น** (`pyodbc` จำเป็นเฉพาะเมื่อใช้งานชนิด `sql` กับฐานข้อมูลที่ไม่ใช่ sqlite)
 - เก็บข้อมูลใน SQLite ไฟล์เดียว `orch.db` (โหมด WAL)
 - ไม่มี Windows Service ของตัวเอง: ใช้ Task Scheduler เพื่อเปิด engine ตอน boot หรือตอน logon เท่านั้น (ดู [การเปิด engine อัตโนมัติ](#การเปิด-engine-อัตโนมัติ-windows))
 
@@ -24,7 +24,8 @@
 
 ## ติดตั้ง
 
-1. ติดตั้ง Python 3.10 ขึ้นไป (เลือก "Add python.exe to PATH")
+1. ติดตั้ง Python 3.10 ขึ้นไป (แนะนำ 3.12) โดยเลือก "Install for all users" และ "Add python.exe to PATH"
+   (engine ที่รันในนาม SYSTEM ต้องเข้าถึง Python และ `pyodbc` ได้ ห้ามติดตั้งแบบรายผู้ใช้หรือ `pip install --user`)
 2. คัดลอกโฟลเดอร์นี้ไปไว้บน **local disk** (ห้ามไว้บน network share เพราะ SQLite WAL ใช้บน share ไม่ได้)
 3. `python orch.py init`
 4. (ถ้าใช้ `sql` กับ SQL Server) `pip install pyodbc` และติดตั้ง ODBC Driver for SQL Server
@@ -102,7 +103,9 @@ python orch.py create load-sales --type sql --conn env:SALES_DB --query-file C:\
   Job Object ใช้ตอนสั่ง kill เท่านั้น: งานที่จบปกติหรือ engine ที่ตายไป จะไม่ทำให้โปรเซสที่เหลืออยู่ถูกฆ่า
 - **chain**: `--after A --after-on success|failure|always` เมื่อ A จบเป็น `Succeeded`/`Dead` งานนี้จะเข้าคิว (อยู่คนละ queue ได้)
 - **pause/resume** คิว: งานที่รันอยู่จะรันต่อจนจบ แต่ engine จะไม่หยิบงานใหม่
-- **ปิด engine** (Ctrl+C / CTRL_BREAK / ปิดงานใน Task Scheduler): kill งานที่รันอยู่แล้วคืนกลับเป็น `Pending` (ไม่นับเป็น attempt ที่ล้มเหลว)
+- **ปิด engine อย่างปลอดภัย** (`orch stop-engine --queue Q`, ปุ่ม Stop engine ใน GUI, Ctrl+C / CTRL_BREAK): kill งานที่รันอยู่
+  แล้วคืนกลับเป็น `Pending` (ไม่นับเป็น attempt ที่ล้มเหลว) ส่วนการกด End ใน Task Scheduler, kill ใน Task Manager หรือการ reboot
+  เป็นการ **ปิดแบบกะทันหัน** ซึ่งให้ผลเหมือน engine ตาย (ดูข้อถัดไป)
 - **engine ตายกะทันหัน**: เมื่อเปิดใหม่ งานที่ค้างเป็น `Running` จะถูกตั้งเป็นล้มเหลว (`engine lost`) แล้ว retry ตามกติกา
   ถ้าโปรเซสเดิมยังไม่ตาย จะมี WARN ให้ตรวจสอบด้วยตนเอง (Orch จะไม่ kill ให้ เพราะเลข pid อาจถูกนำไปใช้ซ้ำกับโปรเซสอื่น)
 - ประวัติการรันที่เก่ากว่า 30 วันจะถูกลบทุกชั่วโมง หรือสั่งเองด้วย `orch prune --days N`
@@ -112,15 +115,16 @@ python orch.py create load-sales --type sql --conn env:SALES_DB --query-file C:\
 `init`, `create`, `change` (แก้เฉพาะ flag ที่ระบุ; ถ้าระบุ schedule flag ใด ๆ จะแทนที่ schedule ทั้งชุด; `--after ""` = ล้าง chain),
 `query [NAME] [--json]`, `run NAME`, `runs [--queue Q] [--status S] [--job NAME] [--limit N] [--json]`, `end RUN_ID`,
 `logs RUN_ID [--follow]`, `enable`/`disable`/`delete NAME`, `pause`/`resume [--queue Q]`, `prune --days N`,
-`engine --queue Q [--poll 1.0]`, `install-startup --queue Q --trigger boot|logon [--user U] [--apply]`
-ดูรายละเอียดด้วย `python orch.py <คำสั่ง> --help`; exit code 2 = input ผิดหรือหา job ไม่เจอ, 3 = มี engine ของคิวนี้รันอยู่แล้ว
+`engine --queue Q [--poll 1.0]`, `stop-engine [--queue Q] [--wait SEC]`, `install-startup --queue Q --trigger boot|logon [--user U] [--apply]`
+ดูรายละเอียดด้วย `python orch.py <คำสั่ง> --help`; exit code 2 = input ผิดหรือหา job ไม่เจอ (รวมถึง `stop-engine` ที่ไม่มี engine รันอยู่ หรือ engine ไม่หยุดภายในเวลาที่กำหนด),
+3 = มี engine ของคิวนี้รันอยู่แล้ว, 4 = lock ของ engine ถูก engine อื่นยึดไประหว่างทำงาน
 
 ## GUI
 
 ดับเบิลคลิก `orch_gui.bat` (หรือ `python orch_gui.py [--db PATH]`)
 - **แถบบน**: สถานะ engine ของแต่ละคิวและการ pause
 - **แท็บ Jobs**: New / Edit / Run now / Enable-Disable / Delete
-- **แท็บ Queue / Runs**: 200 รายการล่าสุด กรองตามสถานะหรือ queue ได้ มี Cancel / Pause / Resume และดับเบิลคลิกเพื่อดู log
+- **แท็บ Queue / Runs**: 200 รายการล่าสุด กรองตามสถานะหรือ queue ได้ มี Cancel / Pause / Resume / Stop engine และดับเบิลคลิกเพื่อดู log
 - **แท็บ Log**: ถ้างานยังรันอยู่ log ใหม่จะต่อท้ายเอง
 - GUI รีเฟรชทุก 2 วินาที และต้องเปิด engine แยกต่างหาก งานถึงจะรันจริง
 
@@ -128,7 +132,9 @@ python orch.py create load-sales --type sql --conn env:SALES_DB --query-file C:\
 
 ใช้ Task Scheduler **เป็นแค่ตัวเปิด engine** (หนึ่ง task ต่อหนึ่ง queue) โดยสร้างด้วย `Register-ScheduledTask`
 ซึ่งตั้ง `ExecutionTimeLimit = 0` ได้ (task ที่สร้างด้วย `schtasks` จะถูกหยุดหลัง 72 ชั่วโมงตามค่าเริ่มต้น)
-ตั้งให้ restart ทุก 1 นาทีได้สูงสุด 999 ครั้ง, `IgnoreNew` และ `StartWhenAvailable`
+ตั้งให้ restart ทุก 1 นาทีได้สูงสุด 999 ครั้ง, `IgnoreNew` และ `StartWhenAvailable` และมี trigger ที่สองซึ่งเปิด engine ซ้ำ **ทุก 5 นาที**
+(restart-on-failure ของ Task Scheduler ไม่ครอบคลุมกรณี engine crash หรือถูก kill) ถ้า engine ยังรันอยู่ การเปิดซ้ำจะถูกข้าม (`IgnoreNew` และ engine lock)
+ดังนั้น engine ที่ตายจะกลับมาภายในไม่เกิน 5 นาที
 
 ```cmd
 python orch.py install-startup --queue default --trigger boot          :: พิมพ์สคริปต์ออกมาให้ตรวจก่อน
@@ -142,6 +148,11 @@ python orch.py install-startup --queue ui --trigger logon --apply
   (เครื่องต้องตั้ง auto-login และห้าม lock หน้าจอ) ควรแยกงานประเภทนี้ไว้คิวของตัวเอง
 - **สิทธิ์ของงาน**: ทุกงานในคิวรันด้วยสิทธิ์ของ account ที่เปิด engine ของคิวนั้น ถ้าต้องการหลาย account ให้แยกคิวและแยก engine
 - engine ที่ Task Scheduler เปิดใช้ `pythonw.exe` จึงไม่มีหน้าต่าง console ให้ดู log ที่ `logs\engine-<queue>.log`
+- **หยุด engine ที่ติดตั้งไว้:** `orch stop-engine --queue Q` เป็นการหยุดชั่วคราว เพราะ trigger ที่ทำซ้ำจะเปิด engine ใหม่ภายใน 5 นาที
+  ถ้าต้องการให้หยุดถาวร เช่น ตอนอัปเดต `orch.py` ให้สั่ง `Disable-ScheduledTask -TaskName 'Orch Engine (Q)'` ก่อน แล้วค่อย `stop-engine`
+  จากนั้นเปิดกลับด้วย `Enable-ScheduledTask` และ `Start-ScheduledTask`
+- **PATH ของ SYSTEM:** งาน `command` ของ engine ที่รันในนาม SYSTEM เห็นเฉพาะ PATH ระดับเครื่อง ให้ใส่ path เต็มของโปรแกรม
+  (เช่น `"C:\Program Files\Python312\python.exe" C:\jobs\x.py`) หรือใช้งานชนิด `python` ซึ่งใช้ interpreter ตัวเดียวกับ engine เสมอ
 - ยกเลิกด้วย `Unregister-ScheduledTask -TaskName 'Orch Engine (default)' -Confirm:$false`
 
 ## ข้อจำกัดที่รู้
@@ -169,7 +180,7 @@ test ของ engine เปิด `orch.py engine` เป็น subprocess จ�
 stress test (SPEC §11) เปิด engine 3 คิวพร้อมกัน มีตัวอ่านแบบ GUI ทุก 0.2 วินาที และสั่ง CLI เขียนซ้ำ ๆ แล้วตรวจว่าไม่มี `database is locked`,
 ไม่มีงานในคิวเดียวกันรันซ้อนกัน และ output ไม่หาย (ตั้ง `ORCH_STRESS_SECONDS` เพื่อเปลี่ยนระยะเวลาได้)
 
-**ยังไม่ได้ทดสอบบน Linux:** Phase 1 ทดสอบบน Windows 11 เท่านั้น โค้ดฝั่ง POSIX (`killpg`, `start_new_session`, SIGTERM) มีอยู่แล้วแต่ยังไม่เคยรันจริง
+**ยังไม่ได้ทดสอบบน Linux:** Phase 1 ทดสอบบน Windows 10/11 เท่านั้น โค้ดฝั่ง POSIX (`killpg`, `start_new_session`, SIGTERM) มีอยู่แล้วแต่ยังไม่เคยรันจริง
 
 | SPEC §9 | test |
 |---|---|
@@ -192,12 +203,14 @@ stress test (SPEC §11) เปิด engine 3 คิวพร้อมกัน 
 ส่วนที่ต้องทดสอบบนเครื่อง Windows จริง (ไม่อยู่ในชุด test อัตโนมัติ):
 
 - [ ] **Boot task**: เปิด prompt แบบ Administrator แล้วสั่ง `install-startup --queue default --trigger boot --apply` จากนั้นดูผลว่า `ExecutionTimeLimit` เป็น `PT0S`
-      (`(Get-ScheduledTask 'Orch Engine (default)').Settings.ExecutionTimeLimit`)
+      และ `Triggers` เป็น 2 (สคริปต์แสดงทั้งสองค่าตอนจบ หรือดูด้วย `(Get-ScheduledTask 'Orch Engine (default)').Settings.ExecutionTimeLimit`)
 - [ ] **รันได้โดยไม่มีคน login**: รีสตาร์ทเครื่องแต่ยังไม่ login แล้วตรวจจากเครื่องอื่นหรือ login ภายหลังว่า `logs\engine-default.log` มีบรรทัด `started`
       และงานที่ตั้ง `every: 1m` มีประวัติการรันช่วงก่อน login
 - [ ] **สิทธิ์ของ SYSTEM**: engine ในนาม SYSTEM อ่าน/เขียน `orch.db` และโฟลเดอร์ `logs` ได้ และงานที่เรียกไฟล์ของ user ทำงานได้
-- [ ] **Restart อัตโนมัติ**: kill `pythonw.exe` ของ engine ใน Task Manager แล้วดูว่าภายใน ~1 นาที Task Scheduler เปิด engine ขึ้นใหม่
+- [ ] **Restart อัตโนมัติ**: kill `pythonw.exe` ของ engine ใน Task Manager แล้วดูว่าภายใน 5 นาที Task Scheduler เปิด engine ขึ้นใหม่
       และ run ที่ค้างอยู่ถูกตั้งเป็น `engine lost` แล้ว retry
+- [ ] **stop-engine กับ engine ที่รันในนาม SYSTEM**: ระหว่างงานยาวรันอยู่ สั่ง `orch stop-engine` ต้องได้ `engine stopped`, งานกลับเป็น `Pending`
+      และ engine log มี `stop requested (stop-engine)` จากนั้นภายใน 5 นาที engine ต้องกลับมาเองแล้วรันงานนั้นต่อ
 - [ ] **ไม่ถูกหยุดที่ 72 ชั่วโมง**: ปล่อย engine รันต่อเนื่อง ≥ 72 ชั่วโมง ใน engine log ต้องไม่มีการ stop/start ในช่วงนั้น
 - [ ] **Logon task**: `install-startup --queue ui --trigger logon --apply` แล้ว logout/login ตรวจว่า engine ของคิว `ui` เปิดใน session ของ user
       และงาน UI automation (เช่น เปิด Notepad) มองเห็นหน้าต่างได้
