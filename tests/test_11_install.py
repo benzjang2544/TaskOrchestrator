@@ -37,7 +37,7 @@ class TestInstallStartup(DBTestCase):
         self.assertIn("$user = 'bob'", orch.build_startup_script("ui", "logon", "bob"))
 
     def test_every_variant_relaunches_a_dead_engine(self):
-        for s in (orch.build_startup_script("q", "boot"), orch.build_startup_script("q", "boot", "D\svc"),
+        for s in (orch.build_startup_script("q", "boot"), orch.build_startup_script("q", "boot", "D\\svc"),
                   orch.build_startup_script("q", "logon")):
             self.assertIn("-RepetitionInterval (New-TimeSpan -Minutes 5)", s)
             self.assertIn("-Trigger @($trigger, $repeat)", s)
@@ -79,12 +79,52 @@ class TestInstallStartup(DBTestCase):
         self.assertTrue(os.path.exists(other))
 
     def test_bat_launchers_exist_ascii_crlf(self):
-        for name in ("orch.bat", "orch_gui.bat", "orch_engine.bat", "start_orch.bat"):
+        for name in ("orch.bat", "orch_gui.bat", "orch_engine.bat", "start_orch.bat", "setup.bat"):
             with open(os.path.join(ROOT, name), "rb") as f:
                 data = f.read()
             data.decode("ascii")
             self.assertIn(b"\r\n", data)
             self.assertNotIn(b"\n", data.replace(b"\r\n", b""))
+
+
+# orch.py verbs each installer script must keep calling (catches a rename in orch.py)
+SETUP_SCRIPTS = {"setup.ps1": ("'init'", "'install-startup'", "'stop-engine'", "'--apply'")}
+
+
+def _is_admin() -> bool:
+    import ctypes
+    return bool(ctypes.windll.shell32.IsUserAnAdmin())
+
+
+@unittest.skipUnless(os.name == "nt", "PowerShell installer scripts are Windows only")
+class TestSetupScripts(DBTestCase):
+    def test_utf8_bom_and_verbs(self):
+        # PowerShell 5.1 reads a BOM-less script as ANSI, which would garble the Thai messages
+        for name, verbs in SETUP_SCRIPTS.items():
+            with open(os.path.join(ROOT, name), "rb") as f:
+                data = f.read()
+            self.assertTrue(data.startswith(b"\xef\xbb\xbf"), name)
+            text = data.decode("utf-8-sig")
+            for verb in verbs:
+                self.assertIn(verb, text, name)
+
+    def test_powershell_parses(self):
+        for name in SETUP_SCRIPTS:
+            path = os.path.join(ROOT, name)
+            r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                "$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile("
+                                f"'{path}', [ref]$null, [ref]$e); $e.Count"],
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.stdout.strip(), "0", f"{name}: {r.stdout}{r.stderr}")
+
+    @unittest.skipIf(os.name == "nt" and _is_admin(), "elevated: the script would really install")
+    def test_setup_refuses_without_admin(self):
+        target = os.path.join(self.tmp, "install")
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                            os.path.join(ROOT, "setup.ps1"), "-InstallDir", target],
+                           capture_output=True, timeout=60)
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse(os.path.exists(target))  # nothing touched before the admin check
 
 
 @unittest.skipUnless(os.name == "nt", "Windows console encodings")
