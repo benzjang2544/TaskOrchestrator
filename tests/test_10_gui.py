@@ -202,6 +202,25 @@ class TestGui(DBTestCase):
         self.assertTrue(d.save())
         self.assertEqual(orch.get_job(self.con, "a")["schedules"][0]["expr"], "1h")
 
+    def test_edit_dialog_reenable_and_clear_description(self):
+        orch.create_job(self.con, "a", "command", CMD, ["every: 10m"], enabled=0, description="old")
+        self.con.execute("UPDATE schedule SET next_run_at='2000-01-01 00:00:00'")
+        self.app.refresh()
+        self.select_job("a")
+        d = self.app.edit_job()
+        d.enabled_var.set(True)
+        d.vars["description"].set("")
+        self.assertTrue(d.save())
+        j = orch.get_job(self.con, "a")
+        self.assertEqual((j["enabled"], j["description"]), (1, None))
+        self.assertGreater(j["schedules"][0]["next_run_at"], orch.now_str())  # no missed fire on re-enable
+
+    def test_database_errors_are_shown(self):
+        def busy(*a):
+            raise orch.sqlite3.OperationalError("database is locked")
+        self.assertEqual(self.app.call(busy), (False, None))
+        self.assertIn("database is locked", self.errors[-1])
+
 
 if __name__ == "__main__":
     unittest.main()

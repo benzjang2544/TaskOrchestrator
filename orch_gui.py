@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -105,11 +106,14 @@ class App:
         return messagebox.askyesno("Orch", msg, parent=self.root)
 
     def call(self, fn, *args, **kw):
-        """Run an orch.py function; show OrchError to the user. Returns (ok, result)."""
+        """Run an orch.py function; show OrchError/sqlite3.Error to the user. Returns (ok, result)."""
         try:
             return True, fn(*args, **kw)
         except orch.OrchError as e:
             self.error(str(e))
+            return False, None
+        except sqlite3.Error as e:  # e.g. database is locked: tell the user instead of failing silently
+            self.error(f"database error: {e} (try again)")
             return False, None
 
     # ----- Jobs tab -----
@@ -424,7 +428,7 @@ class JobDialog:
             self.app.error(f"Params is not valid JSON: {e}")
             return False
         fields.update(queue=v["queue"], dedup_policy=v["dedup_policy"], missed_policy=v["missed_policy"],
-                      after_job=v["after_job"], after_on=v["after_on"], description=v["description"] or None,
+                      after_job=v["after_job"], after_on=v["after_on"], description=v["description"],
                       enabled=1 if self.enabled_var.get() else 0)
         lines = [ln.strip() for ln in self.sched_text.get("1.0", "end").splitlines() if ln.strip()]
         if self.job:

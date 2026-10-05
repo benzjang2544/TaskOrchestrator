@@ -558,6 +558,7 @@ def create_job(con, name: str, job_type: str, params: dict, schedules=(), **fiel
         raise OrchError(f"unknown job field(s): {', '.join(sorted(unknown))}")
     f = dict(JOB_DEFAULTS, **{k: v for k, v in fields.items() if v is not None})
     f["after_job"] = f["after_job"] or None
+    f["description"] = f["description"] or None
     f["enabled"] = 1 if f["enabled"] else 0
     _validate_fields(f)
     params = validate_params(job_type, params)
@@ -590,8 +591,9 @@ def update_job(con, name: str, *, job_type: str | None = None, params: dict | No
             raise OrchError(f"job {name!r} not found")
         f = {k: row[k] for k in JOB_DEFAULTS}
         f.update({k: v for k, v in fields.items() if v is not None})
-        if "after_job" in fields and not fields["after_job"]:
-            f["after_job"] = None
+        for key in ("after_job", "description"):  # "" clears
+            if key in fields and fields[key] == "":
+                f[key] = None
         f["enabled"] = 1 if f["enabled"] else 0
         _validate_fields(f)
         new_type = job_type or row["job_type"]
@@ -602,7 +604,20 @@ def update_job(con, name: str, *, job_type: str | None = None, params: dict | No
                     [new_type, json.dumps(new_params, ensure_ascii=False), *f.values(), row["id"]])
         if prepared is not None:
             _replace_schedules(con, row["id"], prepared)
+        elif f["enabled"] and not row["enabled"]:
+            _reanchor_schedules(con, row["id"], now)
+        if f["queue"] != row["queue"]:  # waiting runs follow the job, or no engine would ever take them
+            con.execute("UPDATE job_run SET queue=? WHERE job_id=? AND status='Pending'", (f["queue"], row["id"]))
     return get_job(con, name)
+
+
+def _reanchor_schedules(con, job_id: int, now: dt.datetime) -> None:
+    """Re-enabling a job: time spent disabled is not "missed", so restart recurring schedules from now.
+    Caller holds the transaction."""
+    for s in con.execute("SELECT * FROM schedule WHERE job_id=? AND enabled=1 AND kind IN ('cron','every')"
+                         " AND next_run_at < ?", (job_id, fmt_ts(now))).fetchall():
+        con.execute("UPDATE schedule SET next_run_at=? WHERE id=?",
+                    (initial_next_run(s["kind"], s["expr"], now), s["id"]))
 
 
 def set_enabled(con, name: str, enabled: bool) -> dict:
@@ -613,11 +628,7 @@ def set_enabled(con, name: str, enabled: bool) -> dict:
             raise OrchError(f"job {name!r} not found")
         con.execute("UPDATE job_def SET enabled=? WHERE id=?", (1 if enabled else 0, row["id"]))
         if enabled:
-            # time spent disabled is not "missed": restart recurring schedules from now
-            for s in con.execute("SELECT * FROM schedule WHERE job_id=? AND enabled=1 AND kind IN ('cron','every')"
-                                 " AND next_run_at < ?", (row["id"], fmt_ts(now))).fetchall():
-                con.execute("UPDATE schedule SET next_run_at=? WHERE id=?",
-                            (initial_next_run(s["kind"], s["expr"], now), s["id"]))
+            _reanchor_schedules(con, row["id"], now)
     return get_job(con, name)
 
 

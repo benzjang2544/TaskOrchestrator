@@ -100,6 +100,33 @@ class TestJobCrud(DBTestCase):
         self.assertEqual(j["priority"], 3)
         self.assertEqual(j["schedules"][0]["expr"], "1h")
 
+    def test_update_reenable_restarts_stale_schedules(self):
+        # same rule as set_enabled: time spent disabled is not "missed" (the GUI edit dialog uses update_job)
+        orch.create_job(self.con, "a", "command", cmd(), ["every: 1h"], enabled=0)
+        self.con.execute("UPDATE schedule SET next_run_at='2000-01-01 00:00:00'")
+        j = orch.update_job(self.con, "a", priority=4)  # still disabled: untouched
+        self.assertEqual(j["schedules"][0]["next_run_at"], "2000-01-01 00:00:00")
+        j = orch.update_job(self.con, "a", enabled=1)
+        self.assertGreater(j["schedules"][0]["next_run_at"], orch.now_str())
+        self.con.execute("UPDATE schedule SET next_run_at='2000-01-01 00:00:00'")
+        j = orch.update_job(self.con, "a", description="x")  # already enabled: untouched
+        self.assertEqual(j["schedules"][0]["next_run_at"], "2000-01-01 00:00:00")
+
+    def test_update_empty_description_clears_it(self):
+        orch.create_job(self.con, "a", "command", cmd(), description="x")
+        self.assertEqual(orch.update_job(self.con, "a", description=None)["description"], "x")
+        self.assertIsNone(orch.update_job(self.con, "a", description="")["description"])
+        self.assertIsNone(orch.create_job(self.con, "b", "command", cmd(), description="")["description"])
+
+    def test_queue_change_moves_pending_runs(self):
+        orch.create_job(self.con, "a", "command", cmd(), dedup_policy="allow")
+        done, _ = orch.enqueue(self.con, "a")
+        orch.cancel_run(self.con, done)
+        pending, _ = orch.enqueue(self.con, "a")
+        orch.update_job(self.con, "a", queue="q2")
+        queues = {r["id"]: r["queue"] for r in orch.list_runs(self.con)}
+        self.assertEqual(queues, {done: "default", pending: "q2"})  # history stays where it ran
+
 
 class TestJobCli(DBTestCase):
     def test_create_query_change_enable_disable_delete(self):
