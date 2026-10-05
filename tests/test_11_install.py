@@ -80,7 +80,7 @@ class TestInstallStartup(DBTestCase):
 
     def test_bat_launchers_exist_ascii_crlf(self):
         for name in ("orch.bat", "orch_gui.bat", "orch_engine.bat", "start_orch.bat", "setup.bat",
-                     "uninstall.bat"):
+                     "uninstall.bat", "package.bat"):
             with open(os.path.join(ROOT, name), "rb") as f:
                 data = f.read()
             data.decode("ascii")

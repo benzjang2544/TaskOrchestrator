@@ -3,3 +3,6 @@ orch.db-*
 logs/
 __pycache__/
 backup/
+dist/
+python-*.exe
+*.whl
