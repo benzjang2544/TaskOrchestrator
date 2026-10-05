@@ -79,7 +79,8 @@ class TestInstallStartup(DBTestCase):
         self.assertTrue(os.path.exists(other))
 
     def test_bat_launchers_exist_ascii_crlf(self):
-        for name in ("orch.bat", "orch_gui.bat", "orch_engine.bat", "start_orch.bat", "setup.bat"):
+        for name in ("orch.bat", "orch_gui.bat", "orch_engine.bat", "start_orch.bat", "setup.bat",
+                     "uninstall.bat"):
             with open(os.path.join(ROOT, name), "rb") as f:
                 data = f.read()
             data.decode("ascii")
@@ -88,7 +89,8 @@ class TestInstallStartup(DBTestCase):
 
 
 # orch.py verbs each installer script must keep calling (catches a rename in orch.py)
-SETUP_SCRIPTS = {"setup.ps1": ("'init'", "'install-startup'", "'stop-engine'", "'--apply'")}
+SETUP_SCRIPTS = {"setup.ps1": ("'init'", "'install-startup'", "'stop-engine'", "'--apply'"),
+                 "uninstall.ps1": ("stop-engine", "Unregister-ScheduledTask")}
 
 
 def _is_admin() -> bool:
@@ -118,13 +120,14 @@ class TestSetupScripts(DBTestCase):
             self.assertEqual(r.stdout.strip(), "0", f"{name}: {r.stdout}{r.stderr}")
 
     @unittest.skipIf(os.name == "nt" and _is_admin(), "elevated: the script would really install")
-    def test_setup_refuses_without_admin(self):
+    def test_scripts_refuse_without_admin(self):
         target = os.path.join(self.tmp, "install")
-        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                            os.path.join(ROOT, "setup.ps1"), "-InstallDir", target],
-                           capture_output=True, timeout=60)
-        self.assertEqual(r.returncode, 1)
-        self.assertFalse(os.path.exists(target))  # nothing touched before the admin check
+        for name in SETUP_SCRIPTS:
+            r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                                os.path.join(ROOT, name), "-InstallDir", target],
+                               capture_output=True, timeout=60)
+            self.assertEqual(r.returncode, 1, name)
+            self.assertFalse(os.path.exists(target), name)  # nothing touched before the admin check
 
 
 @unittest.skipUnless(os.name == "nt", "Windows console encodings")
