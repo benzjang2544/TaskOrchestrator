@@ -4,11 +4,12 @@
   Removes what setup.ps1 added for the installation in -InstallDir (default: this script's folder):
   its engine tasks (after a graceful stop-engine), the GUI shortcuts and the PATH entry.
   Keeps the folder, orch.db and logs: running setup.bat again brings back every job and its history.
-  Only touches tasks/shortcuts that point at this folder, so other Orch installations are left alone.
+  Only touches tasks/shortcuts that point at this folder (shortcuts whatever their name, so a
+  `setup.bat -ShortcutName X` install needs no option here), so other Orch installations are left alone.
+  Logs to <InstallDir>\logs\uninstall-<time>.log.
 #>
 param(
-    [string]$InstallDir = $PSScriptRoot,
-    [string]$ShortcutName = 'Orch'
+    [string]$InstallDir = $PSScriptRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +43,10 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     exit 1
 }
 
+New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir 'logs') | Out-Null
+$LogFile = Join-Path $InstallDir ("logs\uninstall-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
+Start-Transcript -Path $LogFile | Out-Null
+
 Write-Host "Orch uninstall: $InstallDir"
 $rc = 0
 try {
@@ -70,13 +75,19 @@ try {
     Write-Host ''
     Write-Host '==> ลบ shortcut' -ForegroundColor Cyan
     $ws = New-Object -ComObject WScript.Shell
+    $removed = 0
     foreach ($dir in @([Environment]::GetFolderPath('CommonDesktopDirectory'), [Environment]::GetFolderPath('CommonPrograms'))) {
-        $path = Join-Path $dir "$ShortcutName.lnk"
-        if ((Test-Path $path) -and (Refers-ToInstall $ws.CreateShortcut($path).Arguments)) {
-            Remove-Item $path
-            Ok "ลบ $path"
+        # any name: only shortcuts that open this folder's GUI (setup.ps1 -ShortcutName may have renamed them)
+        foreach ($f in @(Get-ChildItem -Path $dir -Filter '*.lnk' -File -ErrorAction SilentlyContinue)) {
+            $lnkArgs = $ws.CreateShortcut($f.FullName).Arguments
+            if ($lnkArgs -match 'orch_gui\.py' -and (Refers-ToInstall $lnkArgs)) {
+                Remove-Item -LiteralPath $f.FullName
+                Ok "ลบ $($f.FullName)"
+                $removed++
+            }
         }
     }
+    if (-not $removed) { Ok 'ไม่มี shortcut ของโฟลเดอร์นี้' }
 
     Write-Host ''
     Write-Host '==> เอาโฟลเดอร์ออกจาก PATH ของเครื่อง' -ForegroundColor Cyan
@@ -96,9 +107,13 @@ try {
     Write-Host "  ข้อมูลยังอยู่ที่ $InstallDir (orch.db = งานและประวัติการรัน, logs)"
     Write-Host '  ติดตั้งกลับด้วย setup.bat จะได้งานเดิมกลับมาทั้งหมด'
     Write-Host '  ถ้าไม่ต้องการข้อมูลแล้ว ให้ลบโฟลเดอร์นี้เอง'
+    Write-Host "  log การถอนการติดตั้ง: $LogFile"
 } catch {
     Write-Host ''
     Write-Host "ถอนการติดตั้งไม่สำเร็จ: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "  ดูรายละเอียดใน $LogFile"
     $rc = 1
+} finally {
+    Stop-Transcript | Out-Null
 }
 exit $rc
