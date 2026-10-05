@@ -120,9 +120,24 @@ class TestGui(DBTestCase):
         orch.create_job(self.con, "a", "command", CMD, queue="q1")
         self.app.refresh()
         self.assertIn("q1: ○ stopped", self.app.status_var.get())
-        self.con.execute("INSERT INTO engine_lock VALUES('q1', 'h', 1, ?)", (orch.now_str(),))
+        self.con.execute("INSERT INTO engine_lock(queue, host, pid, heartbeat) VALUES('q1', 'h', 1, ?)",
+                         (orch.now_str(),))
         self.app.refresh()
         self.assertIn("q1: ● running", self.app.status_var.get())
+
+    def test_stop_engine_button(self):
+        orch.create_job(self.con, "a", "command", CMD, queue="q1")
+        self.app.queue_filter.set("q1")
+        self.app.stop_engine()
+        self.assertIn("no running engine", self.errors[-1])
+        orch.acquire_lock(self.con, "q1", "h", 1)
+        self.answer = False
+        self.app.stop_engine()  # declined: nothing requested
+        self.assertFalse(orch.engine_stop_requested(self.con, "q1", "h", 1))
+        self.answer = True
+        self.app.stop_engine()
+        self.assertTrue(orch.engine_stop_requested(self.con, "q1", "h", 1))
+        self.assertIn("q1: ● running (stopping)", self.app.status_var.get())
 
     def test_log_view_appends_while_running(self):
         orch.create_job(self.con, "a", "command", CMD)

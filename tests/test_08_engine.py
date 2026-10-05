@@ -144,6 +144,25 @@ class TestEngine(DBTestCase):
         self.assertEqual(self.con.execute("SELECT COUNT(*) FROM job_run").fetchone()[0], 1)  # no retry created
         self.assertIsNone(self.con.execute("SELECT 1 FROM engine_lock").fetchone())
 
+    def test_stop_engine_via_cli_requeues(self):
+        self.assertIn("no running engine", self.cli("stop-engine", check=False).stderr)
+        self.job("long", sleep_job(30))
+        rid, _ = orch.enqueue(self.con, "long")
+        eng = self.start_engine()
+        wait_until(lambda: self.run_row(rid)["pid"], 15)
+        pid = self.run_row(rid)["pid"]
+        r = self.cli("stop-engine", "--wait", "30")
+        self.assertIn("engine stopped", r.stdout)
+        self.assertEqual(eng.wait(10), 0)
+        row = self.run_row(rid)
+        self.assertEqual((row["status"], row["attempt"]), ("Pending", 1))
+        self.assertFalse(orch.pid_alive(pid))
+        self.assertIsNone(self.con.execute("SELECT 1 FROM engine_lock").fetchone())
+        self.assertIn("stop requested (stop-engine)", self.engine_output(eng))
+        eng = self.start_engine()  # a new engine starts clean (flag not inherited) and runs the job
+        wait_until(lambda: self.run_row(rid)["status"] == "Running", 15)
+        self.assertEqual(self.stop_engine(eng), 0)
+
     def test_startup_trigger_and_engine_log_file(self):
         orch.create_job(self.con, "boot", "python", sleep_job(0), ["startup"])
         self.start_engine()
@@ -263,6 +282,20 @@ class TestLockUnit(DBTestCase):
         self.assertIsNotNone(self.con.execute("SELECT 1 FROM engine_lock").fetchone())
         orch.release_lock(self.con, "q", "h", 2)
         self.assertIsNone(self.con.execute("SELECT 1 FROM engine_lock").fetchone())
+
+    def test_stop_request(self):
+        with self.assertRaisesRegex(orch.OrchError, "no running engine"):
+            orch.request_engine_stop(self.con, "q")
+        orch.acquire_lock(self.con, "q", "h", 1)
+        self.assertFalse(orch.engine_stop_requested(self.con, "q", "h", 1))
+        self.assertEqual(orch.request_engine_stop(self.con, "q")["pid"], 1)
+        self.assertTrue(orch.engine_stop_requested(self.con, "q", "h", 1))
+        self.assertFalse(orch.engine_stop_requested(self.con, "q", "h", 2))  # only the lock owner's flag
+        self.con.execute("UPDATE engine_lock SET heartbeat='2000-01-01 00:00:00'")
+        with self.assertRaisesRegex(orch.OrchError, "no running engine"):  # stale lock = dead engine
+            orch.request_engine_stop(self.con, "q")
+        orch.acquire_lock(self.con, "q", "h", 2)  # takeover resets the flag
+        self.assertFalse(orch.engine_stop_requested(self.con, "q", "h", 2))
 
 
 if __name__ == "__main__":

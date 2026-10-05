@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: engine_lock.stop_requested
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 ORCH_FILE = os.path.abspath(__file__)
 
@@ -306,7 +306,8 @@ CREATE TABLE IF NOT EXISTS engine_lock (
     queue     TEXT PRIMARY KEY,
     host      TEXT NOT NULL,
     pid       INTEGER NOT NULL,
-    heartbeat TEXT NOT NULL
+    heartbeat TEXT NOT NULL,
+    stop_requested INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -368,10 +369,13 @@ def tx(con: sqlite3.Connection):
 
 
 def init_db(con: sqlite3.Connection) -> None:
+    """Create missing tables and migrate older schemas (idempotent, safe if several processes race)."""
     with tx(con):
         for stmt in SCHEMA.split(";"):
             if stmt.strip():
                 con.execute(stmt)
+        if "stop_requested" not in [r["name"] for r in con.execute("PRAGMA table_info(engine_lock)")]:  # v1 -> v2
+            con.execute("ALTER TABLE engine_lock ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0")
         con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
@@ -1204,17 +1208,18 @@ def prune(con, days: int = PRUNE_DEFAULT_DAYS) -> int:
 
 
 class SchedulerThread(threading.Thread):
-    """Fires schedules every second (independently of the worker), calls `lock_heartbeat`
-    every `lock_every` seconds and prunes hourly. Uses its own connection."""
+    """Fires schedules every second (independently of the worker), calls `check_stop` every tick,
+    `lock_heartbeat` every `lock_every` seconds and prunes hourly. Uses its own connection."""
 
     TICK = 1.0
     PRUNE_EVERY = 3600.0
 
     def __init__(self, queue: str, stop_event: threading.Event, lock_heartbeat=None, lock_every: float = 5.0,
-                 prune_days: int = PRUNE_DEFAULT_DAYS):
+                 prune_days: int = PRUNE_DEFAULT_DAYS, check_stop=None):
         super().__init__(name=f"scheduler-{queue}", daemon=True)
         self.queue, self.stop_event = queue, stop_event
         self.lock_heartbeat, self.lock_every, self.prune_days = lock_heartbeat, lock_every, prune_days
+        self.check_stop = check_stop
 
     def run(self):
         con = connect()
@@ -1222,6 +1227,8 @@ class SchedulerThread(threading.Thread):
         try:
             while not self.stop_event.is_set():
                 try:
+                    if self.check_stop:
+                        self.check_stop(con)
                     ids = scheduler_tick(con, self.queue)
                     if ids:
                         log.info("scheduled run(s) %s", ", ".join(f"#{i}" for i in ids))
@@ -1293,6 +1300,23 @@ def release_lock(con, queue: str, host: str, pid: int) -> None:
     con.execute("DELETE FROM engine_lock WHERE queue=? AND pid=? AND host=?", (queue, pid, host))
 
 
+def request_engine_stop(con, queue: str) -> dict:
+    """Ask the running engine of `queue` to shut down gracefully. Returns its lock row."""
+    with tx(con):
+        row = con.execute("SELECT * FROM engine_lock WHERE queue=?", (queue,)).fetchone()
+        fresh_after = fmt_ts(now_dt() - dt.timedelta(seconds=LOCK_STALE_SEC))
+        if row is None or row["heartbeat"] <= fresh_after:
+            raise OrchError(f"no running engine for queue {queue!r}")
+        con.execute("UPDATE engine_lock SET stop_requested=1 WHERE queue=?", (queue,))
+    return dict(row)
+
+
+def engine_stop_requested(con, queue: str, host: str, pid: int) -> bool:
+    row = con.execute("SELECT stop_requested FROM engine_lock WHERE queue=? AND pid=? AND host=?",
+                      (queue, pid, host)).fetchone()
+    return bool(row and row[0])
+
+
 def engine_states(con) -> list[dict]:
     """Per known queue: engine running? (fresh lock heartbeat) and paused?"""
     fresh_after = fmt_ts(now_dt() - dt.timedelta(seconds=LOCK_STALE_SEC))
@@ -1303,7 +1327,8 @@ def engine_states(con) -> list[dict]:
         lk = con.execute("SELECT * FROM engine_lock WHERE queue=?", (q,)).fetchone()
         out.append({"queue": q, "running": bool(lk and lk["heartbeat"] > fresh_after),
                     "host": lk["host"] if lk else None, "pid": lk["pid"] if lk else None,
-                    "heartbeat": lk["heartbeat"] if lk else None, "paused": is_paused(con, q)})
+                    "heartbeat": lk["heartbeat"] if lk else None, "paused": is_paused(con, q),
+                    "stopping": bool(lk and lk["stop_requested"])})
     return out
 
 
@@ -1374,7 +1399,12 @@ def run_engine(queue: str, poll: float = 1.0) -> int:
             state["lost"] = True
             stop.set()
 
-    sched = SchedulerThread(queue, stop, lock_heartbeat=lock_heartbeat)
+    def check_stop(c):
+        if engine_stop_requested(c, queue, host, pid) and not stop.is_set():
+            log.warning("stop requested (stop-engine): shutting down")
+            stop.set()
+
+    sched = SchedulerThread(queue, stop, lock_heartbeat=lock_heartbeat, check_stop=check_stop)
     try:
         for rid in recover(con, queue):
             log.warning("recovered run #%d", rid)
@@ -1850,6 +1880,24 @@ def cmd_engine(args) -> int:
     return run_engine(args.queue, args.poll)
 
 
+def cmd_stop_engine(args) -> int:
+    con = connect()
+    lock = request_engine_stop(con, args.queue)
+    print(f"stop requested for the engine of queue {args.queue!r} (host {lock['host']}, pid {lock['pid']})")
+    deadline = time.monotonic() + args.wait
+    while con.execute("SELECT 1 FROM engine_lock WHERE queue=? AND host=? AND pid=?",
+                      (args.queue, lock["host"], lock["pid"])).fetchone():
+        if time.monotonic() >= deadline:
+            if args.wait:
+                raise OrchError(f"engine of queue {args.queue!r} did not stop within {args.wait}s")
+            return 0
+        time.sleep(0.5)
+    print("engine stopped")
+    print(f"# an engine installed with install-startup is started again within 5 minutes; to keep it stopped,"
+          f" first run: Disable-ScheduledTask -TaskName {_ps_quote(startup_task_name(args.queue))}")
+    return 0
+
+
 def cmd_prune(args) -> int:
     print(f"pruned {prune(connect(), args.days)} run(s) older than {args.days} day(s)")
     return 0
@@ -1967,6 +2015,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--queue", default="default")
     sp.add_argument("--poll", type=float, default=1.0, help="idle poll interval seconds")
     sp.set_defaults(func=cmd_engine)
+
+    sp = sub.add_parser("stop-engine", help="ask the running engine of a queue to shut down gracefully")
+    sp.add_argument("--queue", default="default")
+    sp.add_argument("--wait", type=int, default=60, help="seconds to wait for it to stop (0 = don't wait)")
+    sp.set_defaults(func=cmd_stop_engine)
 
     sp = sub.add_parser("install-startup", help="register the engine with Windows Task Scheduler (prints by default)")
     sp.add_argument("--queue", default="default")

@@ -10,6 +10,26 @@ class TestFoundation(DBTestCase):
         for t in ("job_def", "schedule", "job_run", "run_log", "queue_state", "engine_lock"):
             self.assertIn(t, names)
 
+    def test_migrates_v1_schema(self):
+        path = f"{self.tmp}/v1.db"
+        old = orch.sqlite3.connect(path)
+        old.executescript(orch.SCHEMA.replace(",\n    stop_requested INTEGER NOT NULL DEFAULT 0", "")
+                          + "PRAGMA user_version=1;")
+        old.execute("INSERT INTO engine_lock VALUES('q', 'h', 1, '2026-01-01 00:00:00')")
+        old.execute("INSERT INTO queue_state VALUES('q', 1)")
+        old.commit()
+        old.close()
+        con = orch.connect(path)
+        try:
+            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0], orch.SCHEMA_VERSION)
+            self.assertEqual(dict(con.execute("SELECT * FROM engine_lock").fetchone()),
+                             {"queue": "q", "host": "h", "pid": 1, "heartbeat": "2026-01-01 00:00:00",
+                              "stop_requested": 0})
+            self.assertTrue(orch.is_paused(con, "q"))
+            orch.init_db(con)  # idempotent
+        finally:
+            con.close()
+
     def test_wal_and_autocommit(self):
         self.assertEqual(self.con.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
         self.assertIsNone(self.con.isolation_level)

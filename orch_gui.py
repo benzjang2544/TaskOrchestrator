@@ -180,7 +180,8 @@ class App:
             w.bind("<<ComboboxSelected>>", lambda e: self.refresh())
             w.bind("<Return>", lambda e: self.refresh())
         for text, cmd in (("Cancel run", self.cancel_run), ("Pause queue", lambda: self.set_paused(True)),
-                          ("Resume queue", lambda: self.set_paused(False)), ("Open log", self.open_log)):
+                          ("Resume queue", lambda: self.set_paused(False)), ("Stop engine", self.stop_engine),
+                          ("Open log", self.open_log)):
             ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=2)
         self.runs_tree = _make_tree(tab, RUN_COLUMNS)
         for status, color in STATUS_COLORS.items():
@@ -214,6 +215,13 @@ class App:
         q = self.target_queue()
         if q and self.call(orch.set_paused, self.con, q, paused)[0]:
             self.refresh()
+
+    def stop_engine(self):
+        q = self.target_queue()
+        if q and self.confirm(f"Stop the engine of queue {q!r}?\n\nA running job is killed and returned to Pending."
+                              "\nAn engine installed with install-startup is started again within 5 minutes."):
+            if self.call(orch.request_engine_stop, self.con, q)[0]:
+                self.refresh()
 
     def open_log(self):
         rid = self.selected_run()
@@ -290,6 +298,8 @@ class App:
         parts = []
         for s in states:
             txt = f"{s['queue']}: {'● running' if s['running'] else '○ stopped'}"
+            if s["running"] and s["stopping"]:
+                txt += " (stopping)"
             if s["paused"]:
                 txt += " (paused)"
             parts.append(txt)
