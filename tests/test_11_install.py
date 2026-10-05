@@ -90,7 +90,7 @@ class TestInstallStartup(DBTestCase):
 
 # orch.py verbs each installer script must keep calling (catches a rename in orch.py)
 SETUP_SCRIPTS = {"setup.ps1": ("'init'", "'install-startup'", "'stop-engine'", "'--apply'"),
-                 "uninstall.ps1": ("stop-engine", "Unregister-ScheduledTask")}
+                 "uninstall.ps1": ("stop-engine", "Unregister-ScheduledTask", "orch_gui", "Start-Transcript")}
 
 
 def _is_admin() -> bool:

@@ -48,7 +48,7 @@
 | ถอนการติดตั้ง | ดับเบิลคลิก `C:\Orch\uninstall.bat` (ลบ task, ไอคอน และ PATH แต่เก็บ `C:\Orch` และ `orch.db` ไว้) |
 | สร้าง zip ไปติดตั้งเครื่องอื่น | รัน `package.bat` บนเครื่องที่มี git จะได้ `dist\Orch-<วันที่>.zip` |
 
-log ของการติดตั้งอยู่ที่ `C:\Orch\logs\setup-<เวลา>.log`
+log ของการติดตั้งอยู่ที่ `C:\Orch\logs\setup-<เวลา>.log` และของการถอนการติดตั้งอยู่ที่ `logs\uninstall-<เวลา>.log`
 
 ### 1.2 ติดตั้งเอง
 
