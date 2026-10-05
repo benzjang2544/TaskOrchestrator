@@ -1626,10 +1626,16 @@ def startup_task_name(queue: str) -> str:
     return f"Orch Engine ({queue})"
 
 
+ENGINE_RELAUNCH_MIN = 5
+
+
 def build_startup_script(queue: str, trigger: str, user: str | None = None) -> str:
     """PowerShell that registers one Task Scheduler task starting `orch.py engine --queue Q`.
 
     Uses Register-ScheduledTask (not schtasks) so the 72h ExecutionTimeLimit can be disabled.
+    Besides the boot/logon trigger, a trigger repeating every ENGINE_RELAUNCH_MIN minutes relaunches an
+    engine that died (restart-on-failure does not cover a crash or kill); IgnoreNew + the engine lock make
+    the extra launches harmless while it runs.
     """
     if trigger not in ("boot", "logon"):
         raise OrchError("--trigger must be boot or logon")
@@ -1642,19 +1648,21 @@ def build_startup_script(queue: str, trigger: str, user: str | None = None) -> s
         "$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 "
         "-RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable "
         "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries",
+        "$repeat = New-ScheduledTaskTrigger -Once -At (Get-Date).Date "
+        f"-RepetitionInterval (New-TimeSpan -Minutes {ENGINE_RELAUNCH_MIN})",
     ]
     if trigger == "boot":
         lines.append("$trigger = New-ScheduledTaskTrigger -AtStartup")
         if user:
             lines += [
                 f"$cred = Get-Credential -UserName {_ps_quote(user)} -Message 'Password for the Orch engine account'",
-                "Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings "
+                "Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($trigger, $repeat) -Settings $settings "
                 "-User $cred.UserName -Password $cred.GetNetworkCredential().Password -RunLevel Highest -Force",
             ]
         else:
             lines += [
                 "$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest",
-                "Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings "
+                "Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($trigger, $repeat) -Settings $settings "
                 "-Principal $principal -Force",
             ]
     else:
@@ -1663,11 +1671,11 @@ def build_startup_script(queue: str, trigger: str, user: str | None = None) -> s
             f"$user = {who}",
             "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user",
             "$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited",
-            "Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings "
+            "Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($trigger, $repeat) -Settings $settings "
             "-Principal $principal -Force",
         ]
     lines.append("Get-ScheduledTask -TaskName $taskName | Select-Object TaskName, State, "
-                 "@{n='ExecutionTimeLimit';e={$_.Settings.ExecutionTimeLimit}}")
+                 "@{n='ExecutionTimeLimit';e={$_.Settings.ExecutionTimeLimit}}, @{n='Triggers';e={$_.Triggers.Count}}")
     return "\n".join(lines) + "\n"
 
 

@@ -36,6 +36,13 @@ class TestInstallStartup(DBTestCase):
         self.assertIn("$env:USERNAME", s)
         self.assertIn("$user = 'bob'", orch.build_startup_script("ui", "logon", "bob"))
 
+    def test_every_variant_relaunches_a_dead_engine(self):
+        for s in (orch.build_startup_script("q", "boot"), orch.build_startup_script("q", "boot", "D\svc"),
+                  orch.build_startup_script("q", "logon")):
+            self.assertIn("-RepetitionInterval (New-TimeSpan -Minutes 5)", s)
+            self.assertIn("-Trigger @($trigger, $repeat)", s)
+            self.assertIn("-MultipleInstances IgnoreNew", s)  # what makes repeated launches harmless
+
     def test_quotes_escaped(self):
         self.assertIn("'Orch Engine (it''s)'", orch.build_startup_script("it's", "boot"))
 
