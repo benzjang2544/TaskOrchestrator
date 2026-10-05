@@ -1,0 +1,3 @@
+@echo off
+rem Orch CLI wrapper: orch query / orch run NAME / orch runs --json ...
+python "%~dp0orch.py" %*
