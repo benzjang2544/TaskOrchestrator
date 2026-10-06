@@ -162,6 +162,39 @@ python orch.py create legacy --type command --params "{\"command\": \"C:/old/run
 
 ใน GUI ให้พิมพ์ JSON ลงกล่อง **Params** ได้เลย (ระบบเติม template ให้ตามชนิดงาน) โดย path ต้องเขียน `\\` เช่น `"C:\\old\\run.exe"` ตามกติกาของ JSON
 
+### 4.7 งาน UiPath และ RPA อื่น ๆ
+
+**หลักการ:** Orch จะรู้ผลของงานได้ ก็ต่อเมื่อคำสั่งที่ใช้ **รอจนงานเสร็จแล้วคืน exit code**
+(0 = สำเร็จ, ค่าอื่น = ล้มเหลว)
+
+ห้ามใช้ shortcut ที่สร้างจาก UiPath Assistant (`... - UiPath.lnk`) หรือคำสั่ง `start` เพราะ shortcut แบบนี้
+เป็นลิงก์ `uipath-assistant://` แค่สั่งให้ Assistant เริ่มงาน แล้วจบทันที ผลคือ:
+- Orch ขึ้น Succeeded ภายใน 1 วินาที แม้ robot จะ error
+- งานถัดไปในคิวเริ่มทั้งที่ robot ยังทำงานอยู่
+- retry, timeout และ `--after` ใช้ไม่ได้
+
+ให้เรียก `UiRobot.exe execute` แทน คำสั่งนี้รอ robot ทำจนเสร็จ แล้วพิมพ์ output arguments ของ workflow เป็น JSON (เช่น `{}`):
+```cmd
+python orch.py create rpa-sort --type command --queue ui --timeout 600 --retry 0 ^
+    --command "\"%LOCALAPPDATA%\Programs\UiPath\Studio\UiRobot.exe\" execute --process-name \"ชื่อ process\""
+```
+- `--process-name` ใช้ชื่อเดียวกับที่เห็นใน UiPath Assistant หรือจะใช้ `--package-id <id>`, `--file <x.nupkg>` แทนก็ได้
+- ส่งค่าเข้า workflow ได้ด้วย `--input "{\"arg\": 1}"`
+- ตำแหน่งของ `UiRobot.exe` ขึ้นกับวิธีติดตั้ง UiPath ให้ตรวจดูก่อน (เครื่องที่ติดตั้ง Studio แบบ per-user อยู่ที่ `%LOCALAPPDATA%\Programs\UiPath\Studio\`)
+- งานที่ต้องใช้หน้าจอต้องอยู่คิว `ui` เท่านั้น (ดู [9.2](#92-ตั้งให้-engine-เปิดเองตอนเปิดเครื่อง-แนะนำสำหรับเครื่องที่ใช้งานจริง))
+
+> **ข้อจำกัด: Cancel และ timeout หยุด robot ไม่ได้**
+> ตัวที่รัน robot จริง (`UiPath.Executor.exe`) ถูกเปิดโดย service ของ UiPath ไม่ใช่ process ลูกของ `UiRobot.exe`
+> พอ Orch kill งาน robot จึงยังทำงานต่อจนจบ Orch แสดง Cancelled หรือ Failed แต่ไม่รู้ผลจริงของ robot
+> - ถ้าจะหยุด robot จริง ให้หยุดจาก UiPath Assistant ด้วย
+> - ตั้ง `--timeout` ให้เผื่อเวลามาก ๆ (เช่น 5–10 เท่าของเวลาปกติ) ถ้าหมดเวลาแล้ว robot ยังไม่จบ
+>   งานถัดไปในคิวจะเริ่มซ้อนกับ robot ตัวเดิม
+> - ถ้า retry ทำงานหลัง timeout robot อาจถูกรันซ้อนกันสองรอบ ถ้า process รันซ้ำแล้วเกิดความเสียหายได้ ให้ตั้ง `--retry 0`
+
+**RPA หรือโปรแกรมอื่น:** ใช้หลักการเดียวกัน ถ้าโปรแกรมมี CLI ที่รอจนเสร็จแล้วคืน exit code ก็ใช้ได้เลย
+(Python/Selenium ใช้ชนิด `python`, .exe ทั่วไปใช้ชนิด `command`)
+ส่วนโปรแกรมที่สั่งงานได้แค่ผ่าน URL หรือ shortcut จะได้แค่ "สั่งแล้วจบ" Orch จะไม่รู้ผลจริง
+
 ## 5. ตั้งเวลา (Schedule)
 
 งานหนึ่งมีได้หลาย schedule ใน CLI ใส่ `--cron`, `--every`, `--at` ซ้ำได้ และมี `--startup`
