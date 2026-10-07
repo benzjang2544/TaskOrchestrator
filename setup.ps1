@@ -10,13 +10,19 @@
   6. orch.py install-startup --apply, start the task, wait for the engine
   7. GUI shortcuts (all-users Desktop + Start menu) and -InstallDir on the machine PATH
 
+  Step 4 also locks down -InstallDir: the engine runs orch.py and the jobs in orch.db as SYSTEM, so anyone who can
+  write there can run code as SYSTEM. Only SYSTEM, Administrators, the account running setup and -AllowUser may write;
+  other users can only read.
+
   Example: setup.bat -Queue ui -Trigger logon
+           setup.bat -AllowUser DOMAIN\opsuser   (that account effectively gets admin rights on this machine)
 #>
 param(
     [string]$InstallDir = 'C:\Orch',
     [string]$Queue = 'default',
     [ValidateSet('boot', 'logon')][string]$Trigger = 'boot',
-    [string]$ShortcutName = 'Orch'
+    [string]$ShortcutName = 'Orch',
+    [string[]]$AllowUser = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,6 +83,18 @@ function Find-Python {
         }
     }
     return $best
+}
+
+function Set-InstallAcl([string]$Dir, [string[]]$Writers) {
+    # Well-known SIDs, so this works whatever the Windows display language is.
+    # /reset drops explicit entries someone added to the folder, then /inheritance:r drops what C:\ hands down
+    # (Authenticated Users: Modify), so only the grants below are left.
+    $grants = @('*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-32-545:(OI)(CI)RX')
+    foreach ($w in $Writers) { $grants += "${w}:(OI)(CI)M" }
+    Invoke-Exe 'icacls.exe' @($Dir, '/reset', '/Q') | Out-Null
+    Invoke-Exe 'icacls.exe' (@($Dir, '/inheritance:r', '/grant:r') + $grants + @('/Q')) | Out-Null
+    # Children must not keep explicit entries of their own (e.g. a writable orch.db): make them inherit only.
+    Invoke-Exe 'icacls.exe' @((Join-Path $Dir '*'), '/reset', '/T', '/C', '/Q') | Out-Null
 }
 
 function Send-EnvChange {
@@ -181,6 +199,14 @@ try {
             '/XF', 'orch.db', 'orch.db-wal', 'orch.db-shm', 'python-*.exe', '*.whl') -OkCodes (0..7) | Out-Null
         Ok 'คัดลอกแล้ว (ฐานข้อมูลและ log เดิมไม่ถูกแตะ)'
     }
+
+    Step "จำกัดสิทธิ์เขียนโฟลเดอร์ $InstallDir"
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    # powershell -File passes "-AllowUser a,b" as one string, not an array
+    $writers = @($me) + @($AllowUser | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    Set-InstallAcl $InstallDir $writers
+    Ok "เขียนได้เฉพาะ SYSTEM, Administrators, $($writers -join ', ') (ผู้ใช้อื่นอ่านได้อย่างเดียว)"
+    if ($AllowUser) { Warn 'account ใน -AllowUser สั่งงานให้รันในนาม SYSTEM ได้ จึงเท่ากับมีสิทธิ์ admin ของเครื่องนี้' }
 
     Step 'เตรียมฐานข้อมูล'
     Invoke-Exe $script:Py @($OrchPy, '--db', $Db, 'init') | Out-Null

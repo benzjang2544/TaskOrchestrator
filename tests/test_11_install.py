@@ -119,6 +119,44 @@ class TestSetupScripts(DBTestCase):
                                capture_output=True, text=True, timeout=60)
             self.assertEqual(r.stdout.strip(), "0", f"{name}: {r.stdout}{r.stderr}")
 
+    def test_install_acl(self):
+        # Run setup.ps1's own Set-InstallAcl (taken from the script's AST) on a temp folder: Authenticated Users
+        # must lose write access (the engine runs this folder's code as SYSTEM), the setup account keeps it.
+        d = os.path.join(self.tmp, "inst")
+        os.makedirs(os.path.join(d, "logs"))
+        with open(os.path.join(d, "orch.db"), "w") as f:
+            f.write("x")
+        script = os.path.join(ROOT, "setup.ps1")
+        ps = ("$ErrorActionPreference = 'Stop'; $e = $null; "
+              f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{script}', [ref]$null, [ref]$e); "
+              "foreach ($f in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) "
+              "{ if ('Invoke-Exe', 'Set-InstallAcl' -contains $f.Name) { . ([scriptblock]::Create($f.Extent.Text)) } }; "
+              "$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name; "
+              # what C:\ gives a new folder, plus an explicit entry on the file: both must go
+              f"icacls '{d}' /grant '*S-1-5-11:(OI)(CI)M' /Q | Out-Null; "
+              f"icacls '{os.path.join(d, 'orch.db')}' /grant '*S-1-5-11:M' /Q | Out-Null; "
+              f"Set-InstallAcl '{d}' @($me); "
+              "foreach ($p in @('" + d + "', '" + os.path.join(d, "orch.db") + "')) { "
+              "(Get-Acl $p).Access | ForEach-Object { '{0}|{1}|{2}' -f $p, $_.IdentityReference.Translate("
+              "[Security.Principal.SecurityIdentifier]).Value, $_.FileSystemRights } }; "
+              "'ME|' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value")
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        lines = [l.split("|") for l in r.stdout.splitlines() if "|" in l]
+        me = next(l[1] for l in lines if l[0] == "ME")
+        rights = [(sid, right) for p, sid, right in (l for l in lines if l[0] != "ME")]
+        sids = {sid for sid, _ in rights}
+        self.assertNotIn("S-1-5-11", sids, r.stdout)  # Authenticated Users
+        self.assertIn("S-1-5-18", sids)
+        self.assertIn("S-1-5-32-544", sids)
+        for sid, right in rights:
+            if sid == "S-1-5-32-545":  # Users: read only
+                self.assertNotIn("Modify", right)
+                self.assertNotIn("Write", right)
+        self.assertTrue(any(sid == me and "Modify" in right for sid, right in rights), r.stdout)
+        with open(os.path.join(d, "orch.db"), "a") as f:  # the setup account can still write
+            f.write("y")
+
     @unittest.skipIf(os.name == "nt" and _is_admin(), "elevated: the script would really install")
     def test_scripts_refuse_without_admin(self):
         target = os.path.join(self.tmp, "install")

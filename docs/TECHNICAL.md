@@ -396,6 +396,11 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 3. **อัปเดต:** ถ้ามี task อยู่แล้ว จะ `Disable-ScheduledTask` เพื่อกันไม่ให้ trigger ที่ทำซ้ำเปิด engine ใหม่ระหว่างคัดลอก
    ตามด้วย `stop-engine --wait 60` และ `Stop-ScheduledTask` เผื่อกรณีที่ engine ไม่หยุด
 4. **คัดลอก** ด้วย `robocopy /E` (ไม่ใช้ `/MIR` จึงไม่ลบอะไรที่ปลายทาง) โดยยกเว้น `.git __pycache__ logs backup dist` และ `orch.db* python-*.exe *.whl`
+   **จำกัดสิทธิ์** (`Set-InstallAcl`): `icacls <dir> /reset` แล้ว `/inheritance:r /grant:r` ให้ SYSTEM และ Administrators = F,
+   Users = RX, account ที่รัน setup และ `-AllowUser` = M (ใช้ SID ของกลุ่ม จึงไม่ขึ้นกับภาษาของ Windows) ตามด้วย `icacls <dir>\* /reset /T`
+   เพื่อให้ไฟล์ข้างในสืบทอดอย่างเดียว เหตุผล: โฟลเดอร์ใหม่ใต้ `C:\` สืบทอด `Authenticated Users: Modify` มา ทำให้ผู้ใช้ทั่วไปแก้ `orch.py`
+   หรือเพิ่มงานใน `orch.db` ให้ engine แบบ boot รันในนาม SYSTEM ได้ (privilege escalation) ผลข้างเคียงคือผู้ใช้ที่ไม่มีสิทธิ์เขียนเปิด DB ไม่ได้
+   (SQLite WAL ต้องเขียนไฟล์ `-shm` แม้แค่อ่าน) `uninstall` ไม่คืนสิทธิ์เดิม ทดสอบใน `test_11_install.test_install_acl`
 5. `init` ซึ่งสร้าง DB ใหม่หรือ migrate schema เดิม
 6. `install-startup --apply` ซึ่งใช้ `-Force` จึงแทนที่ task เดิมและ task กลับเป็น enabled จากนั้น `Start-ScheduledTask`
    แล้วรอไม่เกิน 30 วินาทีจน `engine_states()` บอกว่า running และตรวจว่า task มี `PT0S` และ trigger 2 ตัว
