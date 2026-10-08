@@ -44,7 +44,7 @@
 | ต้องการ | ทำอย่างไร |
 |---|---|
 | ติดตั้งที่อื่น | `setup.bat -InstallDir D:\Orch` |
-| เพิ่มคิวสำหรับงาน UI automation | login ด้วย user ของ robot แล้วรัน `setup.bat -Queue ui -Trigger logon` ตอน UAC กรอกบัญชี admin คนไหนก็ได้ task จะผูกกับ **user ที่ login อยู่** (ระบุเองได้ด้วย `-User DOMAIN\rpa`) user นั้นไม่ต้องเป็น admin และได้สิทธิ์เขียน `C:\Orch` อัตโนมัติ **จึงมีสิทธิ์เท่า admin ของเครื่อง** (เหมือน `-AllowUser`) |
+| เพิ่มคิวสำหรับงาน UI automation | login ด้วย user ของ robot แล้วดับเบิลคลิก `setup-ui.bat` (เท่ากับ `setup.bat -Queue ui -Trigger logon`) ตอน UAC กรอกบัญชี admin คนไหนก็ได้ task จะผูกกับ **user ที่ login อยู่** (ระบุเองได้ด้วย `-User DOMAIN\rpa`) user นั้นไม่ต้องเป็น admin และได้สิทธิ์เขียน `C:\Orch` อัตโนมัติ **จึงมีสิทธิ์เท่า admin ของเครื่อง** (เหมือน `-AllowUser`) |
 | ให้ผู้ใช้อื่นใช้ GUI/CLI ได้ | `setup.bat -AllowUser DOMAIN\user` (หลายคนคั่นด้วย `,`) **account นั้นจะมีสิทธิ์เท่า admin ของเครื่อง** เพราะสร้างงานที่รันในนาม SYSTEM ได้ ผู้ใช้ที่ไม่ได้รับสิทธิ์จะเปิด GUI ไม่ได้ |
 | อัปเดตเป็นเวอร์ชันใหม่ | แตก zip ใหม่แล้วรัน `setup.bat` ทับ ระบบจะหยุด engine แบบปลอดภัยก่อน และไม่แตะ `orch.db` |
 | เครื่องไม่มีอินเทอร์เน็ต | วาง `python-3.12.x-amd64.exe` และ `pyodbc-*-cp312-*-win_amd64.whl` ไว้ข้าง `setup.bat` ก่อนรัน |

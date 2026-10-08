@@ -19,7 +19,8 @@ python orch.py engine --queue default                 # run one queue's engine
 python orch.py stop-engine --queue default            # graceful stop via the DB (works for pythonw/boot engines)
 python orch_gui.py                                    # GUI
 python orch.py install-startup --queue default --trigger boot   # prints the Register-ScheduledTask script (--apply runs it)
-setup.bat [-InstallDir C:\Orch] [-Queue Q -Trigger boot|logon]   # one-click install/update (UAC); uninstall.bat keeps data
+setup.bat [-InstallDir C:\Orch] [-Queue Q -Trigger boot|logon] [-User U]   # one-click install/update (UAC); uninstall.bat keeps data
+setup-ui.bat                                          # = setup.bat -Queue ui -Trigger logon (task for the signed-in user)
 package.bat                                           # dist\Orch-<date>.zip of the committed files (git archive)
 python -m unittest discover -s tests -p "test_*.py"   # all tests (run from repo root)
 cd tests && python -m unittest test_06_finalize       # one module

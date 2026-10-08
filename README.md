@@ -41,7 +41,8 @@
 
 - **อัปเดตเวอร์ชัน:** แตก zip เวอร์ชันใหม่แล้วรัน `setup.bat` ทับ สคริปต์จะหยุด engine แบบปลอดภัยก่อน (`stop-engine`) แล้วคัดลอกไฟล์
   โดยไม่แตะ `orch.db` และ log จึงได้งานและประวัติเดิมครบ
-- **ตัวเลือก:** `setup.bat -InstallDir D:\Orch`, หรือเพิ่มคิวสำหรับ UI automation ด้วย `setup.bat -Queue ui -Trigger logon`
+- **ตัวเลือก:** `setup.bat -InstallDir D:\Orch`, หรือเพิ่มคิวสำหรับ UI automation ด้วยการ login เป็น user ของ robot
+  แล้วดับเบิลคลิก **`setup-ui.bat`** (เท่ากับ `setup.bat -Queue ui -Trigger logon`)
   แบบ logon จะลงทะเบียนให้ **user ที่ login อยู่ตอนรัน setup** (ไม่ใช่บัญชี admin ที่กรอกตอน UAC) หรือระบุเองด้วย `-User DOMAIN\rpa`
   user นั้นไม่ต้องเป็น admin และได้สิทธิ์เขียน `C:\Orch` อัตโนมัติ (คงไว้แม้รัน setup ของคิวอื่นภายหลัง)
 - **เครื่องที่ไม่มีอินเทอร์เน็ต:** วาง `python-3.12.x-amd64.exe` (จาก python.org) และ `pyodbc-*-cp312-*-win_amd64.whl` ไว้ข้าง `setup.bat` ก่อนรัน
