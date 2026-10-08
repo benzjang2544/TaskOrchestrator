@@ -12,15 +12,21 @@
 
   Step 4 also locks down -InstallDir: the engine runs orch.py and the jobs in orch.db as SYSTEM, so anyone who can
   write there can run code as SYSTEM. Only SYSTEM, Administrators, the account running setup and -AllowUser may write;
-  other users can only read.
+  other users can only read. The account of a logon engine (-User) and of every logon engine already registered
+  must write orch.db too, so they are added automatically and keep their access when setup runs again.
 
-  Example: setup.bat -Queue ui -Trigger logon
+  A logon task belongs to -User, or by default to the user signed in to this session (the owner of explorer.exe),
+  not to the admin account typed at the UAC prompt: a robot account usually has no admin rights.
+
+  Example: setup.bat -Queue ui -Trigger logon                  (task for the user signed in now)
+           setup.bat -Queue ui -Trigger logon -User DOMAIN\rpa
            setup.bat -AllowUser DOMAIN\opsuser   (that account effectively gets admin rights on this machine)
 #>
 param(
     [string]$InstallDir = 'C:\Orch',
     [string]$Queue = 'default',
     [ValidateSet('boot', 'logon')][string]$Trigger = 'boot',
+    [string]$User = '',
     [string]$ShortcutName = 'Orch',
     [string[]]$AllowUser = @()
 )
@@ -97,6 +103,29 @@ function Set-InstallAcl([string]$Dir, [string[]]$Writers) {
     Invoke-Exe 'icacls.exe' @((Join-Path $Dir '*'), '/reset', '/T', '/C', '/Q') | Out-Null
 }
 
+function Get-SessionUser {
+    # The user signed in to this session. An elevation with another admin's credentials stays in the same session,
+    # so the owner of its explorer.exe is the person at the screen, not the account typed at the UAC prompt.
+    $sid = [Diagnostics.Process]::GetCurrentProcess().SessionId
+    foreach ($p in @(Get-CimInstance Win32_Process -Filter "Name = 'explorer.exe' AND SessionId = $sid" -ErrorAction SilentlyContinue)) {
+        $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction SilentlyContinue
+        if ($o -and $o.ReturnValue -eq 0 -and $o.User) { return "$($o.Domain)\$($o.User)" }
+    }
+    return $null
+}
+
+function Get-LogonTaskUsers([string]$Except) {
+    # Accounts of the logon engines already registered (other than $Except, which is about to be re-registered):
+    # they must keep write access to orch.db
+    $users = @()
+    foreach ($t in @(Get-ScheduledTask -TaskName 'Orch Engine (*)' -ErrorAction SilentlyContinue)) {
+        if ($t.TaskName -eq $Except) { continue }
+        $id = $t.Principal.UserId
+        if ($id -and $t.Principal.LogonType -ne 'ServiceAccount' -and $id -notmatch '^(NT AUTHORITY\\)?SYSTEM$') { $users += $id }
+    }
+    return $users
+}
+
 function Send-EnvChange {
     if (-not ('Win32.OrchEnv' -as [type])) {
         Add-Type -Namespace Win32 -Name OrchEnv -MemberDefinition @'
@@ -133,6 +162,22 @@ Start-Transcript -Path $LogFile | Out-Null
 Write-Host "Orch setup: ติดตั้งที่ $InstallDir, คิว '$Queue', เปิด engine ตอน $Trigger"
 
 try {
+    $EngineUser = $null
+    if ($Trigger -eq 'logon') {
+        Step 'เลือก user ที่จะรัน engine (logon)'
+        if ($User) {
+            $EngineUser = $User
+            Ok "$EngineUser (จาก -User)"
+        } else {
+            $EngineUser = Get-SessionUser
+            if (-not $EngineUser) { throw 'หา user ที่ login อยู่ไม่พบ: ระบุเองด้วย -User DOMAIN\user' }
+            Ok "$EngineUser (user ที่ login อยู่ตอนนี้ ระบุคนอื่นได้ด้วย -User DOMAIN\user)"
+        }
+    } elseif ($User) {
+        throw '-User ใช้กับ -Trigger logon เท่านั้น (engine แบบ boot รันในนาม SYSTEM)'
+    }
+
+
     Step 'ตรวจหา Python 3.10 ขึ้นไปแบบติดตั้งให้ทุกคน (all users)'
     $found = Find-Python
     if ($found) {
@@ -181,12 +226,26 @@ try {
         Step "หยุด engine เดิมของคิว '$Queue' เพื่ออัปเดต"
         Disable-ScheduledTask -TaskName $TaskName | Out-Null
         $script:DisabledTask = $true
+        $code = 2
         if (Test-Path $OrchPy) {
-            # exit 2 = no engine running (or an old orch.py without stop-engine): fine either way
-            Invoke-Exe $script:Py @($OrchPy, '--db', $Db, 'stop-engine', '--queue', $Queue, '--wait', '60') -OkCodes @(0, 2) | Out-Null
+            # exit 2 = no engine running (or an old orch.py without stop-engine): fine either way, and its
+            # "error: no running engine" line would only confuse, so stop-engine's output is not shown
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $out = & $script:Py @($OrchPy, '--db', $Db, 'stop-engine', '--queue', $Queue, '--wait', '60') 2>&1
+                $code = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $old
+            }
+            if ($code -notin @(0, 2)) {
+                $out | ForEach-Object { "    $_" } | Out-Host
+                throw "stop-engine จบด้วย exit code $code"
+            }
         }
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-        Ok 'engine เดิมหยุดแล้ว (งานที่รันอยู่กลับเป็น Pending)'
+        if ($code -eq 0) { Ok 'engine เดิมหยุดแล้ว (งานที่รันอยู่กลับเป็น Pending)' }
+        else { Ok 'ไม่มี engine เดิมทำงานอยู่' }
     }
 
     Step "คัดลอกไฟล์ไปที่ $InstallDir"
@@ -203,19 +262,40 @@ try {
     Step "จำกัดสิทธิ์เขียนโฟลเดอร์ $InstallDir"
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     # powershell -File passes "-AllowUser a,b" as one string, not an array
-    $writers = @($me) + @($AllowUser | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $allow = @($AllowUser | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    # a logon engine runs as its user and writes orch.db and logs, so that user (and those of the other logon
+    # engines, which a re-run must not lock out) gets write access too
+    $writers = @()
+    $seen = @{}
+    foreach ($w in @($me) + $allow + @($EngineUser) + @(Get-LogonTaskUsers $TaskName)) {
+        if (-not $w) { continue }
+        try { $key = ([Security.Principal.NTAccount]$w).Translate([Security.Principal.SecurityIdentifier]).Value }
+        catch { $key = $w.ToLower() }
+        if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; $writers += $w }
+    }
     Set-InstallAcl $InstallDir $writers
     Ok "เขียนได้เฉพาะ SYSTEM, Administrators, $($writers -join ', ') (ผู้ใช้อื่นอ่านได้อย่างเดียว)"
-    if ($AllowUser) { Warn 'account ใน -AllowUser สั่งงานให้รันในนาม SYSTEM ได้ จึงเท่ากับมีสิทธิ์ admin ของเครื่องนี้' }
+    $others = @($writers | Select-Object -Skip 1)
+    if ($others) {
+        Warn "$($others -join ', ') สั่งงานให้รันในนาม SYSTEM ได้ จึงเท่ากับมีสิทธิ์ admin ของเครื่องนี้"
+    }
 
     Step 'เตรียมฐานข้อมูล'
     Invoke-Exe $script:Py @($OrchPy, '--db', $Db, 'init') | Out-Null
     Ok $Db
 
     Step "ลงทะเบียน engine กับ Task Scheduler ('$TaskName')"
-    Invoke-Exe $script:Py @($OrchPy, '--db', $Db, 'install-startup', '--queue', $Queue, '--trigger', $Trigger, '--apply') | Out-Null
+    $startup = @($OrchPy, '--db', $Db, 'install-startup', '--queue', $Queue, '--trigger', $Trigger, '--apply')
+    if ($EngineUser) { $startup += @('--user', $EngineUser) }
+    Invoke-Exe $script:Py $startup | Out-Null
     $script:DisabledTask = $false  # re-registered with -Force: enabled again
     $task = Get-ScheduledTask -TaskName $TaskName
+    $runAs = $task.Principal.UserId
+    if ($EngineUser -and $runAs -and ($EngineUser -split '\\')[-1] -ine ($runAs -split '\\')[-1]) {
+        Warn "task รันในนาม $runAs (ควรเป็น $EngineUser)"
+    } else {
+        Ok "task รันในนาม $(if ($EngineUser) { $EngineUser } else { $runAs })"
+    }
     if ($task.Settings.ExecutionTimeLimit -eq 'PT0S') { Ok 'ไม่มีเวลาหมดอายุ (ExecutionTimeLimit = PT0S)' }
     else { Warn "ExecutionTimeLimit = $($task.Settings.ExecutionTimeLimit) (ควรเป็น PT0S)" }
     if ($task.Triggers.Count -eq 2) { Ok 'มี trigger 2 ตัว (ตอนเริ่มต้น + เปิดซ้ำทุก 5 นาที)' }
@@ -232,7 +312,9 @@ try {
         $engineOk = ((Get-PyOutput @('-c', $check, $Db, $InstallDir, $Queue)) -eq 'running')
     }
     if ($engineOk) { Ok "engine ของคิว '$Queue' ทำงานแล้ว" }
-    elseif ($Trigger -eq 'logon') { Warn 'engine ยังไม่เริ่ม (แบบ logon จะเริ่มเมื่อ user ที่ลงทะเบียนไว้ login)' }
+    elseif ($Trigger -eq 'logon') {
+        Warn "engine ยังไม่เริ่ม: จะเริ่มเมื่อ $EngineUser login (ถ้า login อยู่แล้ว ดู $InstallDir\logs\engine-$Queue.log)"
+    }
     else { Warn "engine ยังไม่เริ่มภายใน 30 วินาที ดู $InstallDir\logs\engine-$Queue.log" }
 
     Step 'สร้าง shortcut ของ GUI'
@@ -261,7 +343,7 @@ try {
     Write-Host "  โฟลเดอร์       : $InstallDir"
     Write-Host "  Python         : $($found.Version)  ($script:Py)"
     Write-Host "  pyodbc         : $(if ($pyodbcOk) { 'พร้อมใช้' } else { 'ไม่มี (งาน sql กับ SQL Server ใช้ไม่ได้)' })"
-    Write-Host "  engine         : $(if ($engineOk) { 'ทำงานอยู่' } else { 'ยังไม่ทำงาน' })  (task '$TaskName')"
+    Write-Host "  engine         : $(if ($engineOk) { 'ทำงานอยู่' } else { 'ยังไม่ทำงาน' })  (task '$TaskName'$(if ($EngineUser) { ", รันในนาม $EngineUser" }))"
     Write-Host "  GUI            : ไอคอน '$ShortcutName' บน Desktop หรือใน Start menu"
     Write-Host '  CLI            : เปิดหน้าต่าง cmd/PowerShell ใหม่แล้วพิมพ์  orch query'
     Write-Host "  log การติดตั้ง : $LogFile"

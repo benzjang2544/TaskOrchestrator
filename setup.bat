@@ -1,6 +1,7 @@
 @echo off
 rem Orch setup: install or update Orch on this machine. Asks for Administrator rights (UAC).
-rem Options: setup.bat [-InstallDir C:\Orch] [-Queue default] [-Trigger boot or logon]
+rem Options: setup.bat [-InstallDir C:\Orch] [-Queue default] [-Trigger boot or logon] [-User DOMAIN\user]
+rem          [-AllowUser DOMAIN\user]   (a logon task belongs to the user signed in now, or to -User)
 setlocal
 fltmc >nul 2>&1
 if not errorlevel 1 goto elevated

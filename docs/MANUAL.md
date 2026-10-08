@@ -44,11 +44,11 @@
 | ต้องการ | ทำอย่างไร |
 |---|---|
 | ติดตั้งที่อื่น | `setup.bat -InstallDir D:\Orch` |
-| เพิ่มคิวสำหรับงาน UI automation | `setup.bat -Queue ui -Trigger logon` (ลงทะเบียนให้ user ที่รัน setup) |
+| เพิ่มคิวสำหรับงาน UI automation | login ด้วย user ของ robot แล้วรัน `setup.bat -Queue ui -Trigger logon` ตอน UAC กรอกบัญชี admin คนไหนก็ได้ task จะผูกกับ **user ที่ login อยู่** (ระบุเองได้ด้วย `-User DOMAIN\rpa`) user นั้นไม่ต้องเป็น admin และได้สิทธิ์เขียน `C:\Orch` อัตโนมัติ **จึงมีสิทธิ์เท่า admin ของเครื่อง** (เหมือน `-AllowUser`) |
 | ให้ผู้ใช้อื่นใช้ GUI/CLI ได้ | `setup.bat -AllowUser DOMAIN\user` (หลายคนคั่นด้วย `,`) **account นั้นจะมีสิทธิ์เท่า admin ของเครื่อง** เพราะสร้างงานที่รันในนาม SYSTEM ได้ ผู้ใช้ที่ไม่ได้รับสิทธิ์จะเปิด GUI ไม่ได้ |
 | อัปเดตเป็นเวอร์ชันใหม่ | แตก zip ใหม่แล้วรัน `setup.bat` ทับ ระบบจะหยุด engine แบบปลอดภัยก่อน และไม่แตะ `orch.db` |
 | เครื่องไม่มีอินเทอร์เน็ต | วาง `python-3.12.x-amd64.exe` และ `pyodbc-*-cp312-*-win_amd64.whl` ไว้ข้าง `setup.bat` ก่อนรัน |
-| ถอนการติดตั้ง | ดับเบิลคลิก `C:\Orch\uninstall.bat` (ลบ task, ไอคอน และ PATH แต่เก็บ `C:\Orch` และ `orch.db` ไว้) |
+| ถอนการติดตั้ง | ดับเบิลคลิก `C:\Orch\uninstall.bat` (ลบ task **ของทุกคิว**, ไอคอน และ PATH แต่เก็บ `C:\Orch` และ `orch.db` ไว้) ตอนจบจะแสดงคำสั่ง `setup.bat` ของแต่ละคิวไว้ใช้ติดตั้งกลับ เพราะ setup ติดตั้งครั้งละหนึ่งคิว |
 | สร้าง zip ไปติดตั้งเครื่องอื่น | รัน `package.bat` บนเครื่องที่มี git จะได้ `dist\Orch-<วันที่>.zip` |
 
 log ของการติดตั้งอยู่ที่ `C:\Orch\logs\setup-<เวลา>.log` และของการถอนการติดตั้งอยู่ที่ `logs\uninstall-<เวลา>.log`
@@ -371,6 +371,10 @@ python orch.py engine --queue default       :: หรือ orch_engine.bat defa
 - งานทุกตัวในคิวรันด้วยสิทธิ์ของ account ที่เปิด engine ถ้าต้องใช้หลาย account ให้แยกเป็นหลายคิว และติดตั้ง engine แยกกัน
 - **งาน UI automation** ให้แยกไว้คิวของตัวเอง (เช่น `ui`) แล้วใช้ `--trigger logon` เครื่องต้องตั้ง auto-login และห้าม lock หน้าจอ
   ห้ามใช้ `boot` กับงานประเภทนี้
+- task แบบ logon รันได้เฉพาะตอนที่เจ้าของ task login อยู่ ถ้า GUI ขึ้น `ui: ○ stopped` ทั้งที่ user ของ robot login อยู่ ให้ตรวจว่า task ผูกกับใคร
+  `(Get-ScheduledTask 'Orch Engine (ui)').Principal.UserId` (PowerShell แบบ Administrator) ถ้าไม่ใช่ user ของ robot ให้รัน
+  `setup.bat -Queue ui -Trigger logon -User DOMAIN\rpa` ใหม่ หมายเหตุ: `install-startup --trigger logon` ที่ไม่ใส่ `--user` จะใช้บัญชีที่รันคำสั่ง
+  ซึ่งตอนรันแบบ Administrator มักเป็นบัญชี admin ไม่ใช่ user ของ robot
 - engine ที่เปิดจาก Task Scheduler ไม่มีหน้าต่าง ให้ดู log ที่ `logs\engine-<คิว>.log` หรือดูสถานะที่แถบบนของ GUI
 - task มี trigger สองตัว: ตอนบูต (หรือตอน logon) และอีกตัวที่ทำซ้ำทุก 5 นาที ถ้า engine ตาย (crash หรือถูก kill) จะถูกเปิดใหม่ภายใน 5 นาที
   ระหว่างที่ engine ยังรันอยู่ การเปิดซ้ำจะถูกข้าม และ task ไม่มีเวลาหมดอายุ (ไม่ถูกหยุดที่ 72 ชั่วโมง)

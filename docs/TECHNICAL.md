@@ -397,12 +397,18 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
    ตามด้วย `stop-engine --wait 60` และ `Stop-ScheduledTask` เผื่อกรณีที่ engine ไม่หยุด
 4. **คัดลอก** ด้วย `robocopy /E` (ไม่ใช้ `/MIR` จึงไม่ลบอะไรที่ปลายทาง) โดยยกเว้น `.git __pycache__ logs backup dist` และ `orch.db* python-*.exe *.whl`
    **จำกัดสิทธิ์** (`Set-InstallAcl`): `icacls <dir> /reset` แล้ว `/inheritance:r /grant:r` ให้ SYSTEM และ Administrators = F,
-   Users = RX, account ที่รัน setup และ `-AllowUser` = M (ใช้ SID ของกลุ่ม จึงไม่ขึ้นกับภาษาของ Windows) ตามด้วย `icacls <dir>\* /reset /T`
+   Users = RX, writers = M (ใช้ SID ของกลุ่ม จึงไม่ขึ้นกับภาษาของ Windows) ตามด้วย `icacls <dir>\* /reset /T`
+   writers = account ที่รัน setup + `-AllowUser` + user ของ engine แบบ logon ที่กำลังติดตั้ง + user ของ task logon อื่น ๆ ที่มีอยู่แล้ว
+   (`Get-LogonTaskUsers` ไม่นับ task ของคิวที่กำลังลงทะเบียนใหม่) ตัดตัวซ้ำด้วย SID engine แบบ logon รันในนาม user ของมันและต้องเขียน
+   `orch.db` กับ `logs` ได้ ถ้าไม่ใส่ user ของ task อื่นไว้ การรัน setup ของคิวอื่นจะทำให้ engine นั้นเขียน DB ไม่ได้
    เพื่อให้ไฟล์ข้างในสืบทอดอย่างเดียว เหตุผล: โฟลเดอร์ใหม่ใต้ `C:\` สืบทอด `Authenticated Users: Modify` มา ทำให้ผู้ใช้ทั่วไปแก้ `orch.py`
    หรือเพิ่มงานใน `orch.db` ให้ engine แบบ boot รันในนาม SYSTEM ได้ (privilege escalation) ผลข้างเคียงคือผู้ใช้ที่ไม่มีสิทธิ์เขียนเปิด DB ไม่ได้
    (SQLite WAL ต้องเขียนไฟล์ `-shm` แม้แค่อ่าน) `uninstall` ไม่คืนสิทธิ์เดิม ทดสอบใน `test_11_install.test_install_acl`
 5. `init` ซึ่งสร้าง DB ใหม่หรือ migrate schema เดิม
 6. `install-startup --apply` ซึ่งใช้ `-Force` จึงแทนที่ task เดิมและ task กลับเป็น enabled จากนั้น `Start-ScheduledTask`
+   แบบ logon จะส่ง `--user` เสมอ ค่าคือ `-User` หรือ `Get-SessionUser` (เจ้าของ `explorer.exe` ใน session เดียวกับ setup)
+   เพราะ setup ที่ยกสิทธิ์ด้วยบัญชี admin อื่นตอน UAC ยังอยู่ใน session ของ user ที่นั่งหน้าจอ แต่ `$env:USERNAME` เป็นบัญชี admin
+   ถ้าไม่มี `explorer.exe` (เช่นรันผ่าน remote shell) setup จะหยุดและให้ระบุ `-User` จากนั้นแสดง `Principal.UserId` ของ task ที่ได้
    แล้วรอไม่เกิน 30 วินาทีจน `engine_states()` บอกว่า running และตรวจว่า task มี `PT0S` และ trigger 2 ตัว
 7. สร้าง shortcut ใน Desktop และ Start menu ของ all users (`pythonw.exe "<dir>\orch_gui.py" --db "<dir>\orch.db"`)
 8. เพิ่มโฟลเดอร์ติดตั้งและโฟลเดอร์ Python ลง machine PATH โดยเขียน registry ตรง ๆ แบบ `REG_EXPAND_SZ` ที่ยังไม่ขยาย `%VAR%`

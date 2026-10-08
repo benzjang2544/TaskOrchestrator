@@ -55,9 +55,18 @@ try {
     $tasks = @(Get-ScheduledTask -TaskName 'Orch Engine (*)' -ErrorAction SilentlyContinue |
         Where-Object { Refers-ToInstall $_.Actions[0].Arguments })
     if (-not $tasks) { Ok 'ไม่มี task ของโฟลเดอร์นี้' }
+    $reinstall = @()
     foreach ($t in $tasks) {
         Disable-ScheduledTask -TaskName $t.TaskName | Out-Null  # the 5-minute trigger must not relaunch it
         $queue = if ($t.TaskName -match '^Orch Engine \((.*)\)$') { $Matches[1] } else { 'default' }
+        # setup.bat installs one queue per run: remember how to bring each one back
+        $cmd = if ($queue -eq 'default') { 'setup.bat' } else { "setup.bat -Queue $queue" }
+        if (@($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' })) {
+            $cmd += " -Trigger logon -User $($t.Principal.UserId)"
+        } elseif ($queue -ne 'default') {
+            $cmd += ' -Trigger boot'
+        }
+        $reinstall += $cmd
         # the task runs pythonw.exe; python.exe next to it shows stop-engine's output here
         $py = Join-Path (Split-Path $t.Actions[0].Execute.Trim('"')) 'python.exe'
         if ((Test-Path $py) -and (Test-Path $OrchPy)) {
@@ -106,6 +115,12 @@ try {
     Write-Host '==================== ถอนการติดตั้งเสร็จแล้ว ====================' -ForegroundColor Green
     Write-Host "  ข้อมูลยังอยู่ที่ $InstallDir (orch.db = งานและประวัติการรัน, logs)"
     Write-Host '  ติดตั้งกลับด้วย setup.bat จะได้งานเดิมกลับมาทั้งหมด'
+    if ($reinstall.Count -gt 1) {
+        Write-Host '  setup.bat ติดตั้งครั้งละหนึ่งคิว ถ้าจะให้ engine กลับมาครบทุกคิวให้รันทีละบรรทัด:'
+        foreach ($c in $reinstall) { Write-Host "    $c" }
+    } elseif ($reinstall.Count -eq 1 -and $reinstall[0] -ne 'setup.bat') {
+        Write-Host "  ให้ engine กลับมาแบบเดิมด้วย: $($reinstall[0])"
+    }
     Write-Host '  ถ้าไม่ต้องการข้อมูลแล้ว ให้ลบโฟลเดอร์นี้เอง'
     Write-Host "  log การถอนการติดตั้ง: $LogFile"
 } catch {

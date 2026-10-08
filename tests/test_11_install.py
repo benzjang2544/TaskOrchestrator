@@ -157,6 +157,40 @@ class TestSetupScripts(DBTestCase):
         with open(os.path.join(d, "orch.db"), "a") as f:  # the setup account can still write
             f.write("y")
 
+    def run_setup_functions(self, names, body):
+        """Load setup.ps1's own functions `names` (from the script's AST) and run `body`; returns stdout lines."""
+        script = os.path.join(ROOT, "setup.ps1")
+        quoted = ", ".join(f"'{n}'" for n in names)
+        ps = ("$ErrorActionPreference = 'Stop'; $e = $null; "
+              f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{script}', [ref]$null, [ref]$e); "
+              "foreach ($f in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) "
+              f"{{ if (@({quoted}) -contains $f.Name) {{ . ([scriptblock]::Create($f.Extent.Text)) }} }}; " + body)
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout.splitlines()
+
+    def test_session_user_is_the_signed_in_user(self):
+        # a logon task must belong to the user at the screen, not to the admin typed at the UAC prompt;
+        # unelevated, the owner of this session's explorer.exe is simply this user
+        if not subprocess.run(["tasklist", "/FI", "IMAGENAME eq explorer.exe"], capture_output=True,
+                              text=True).stdout.lower().count("explorer.exe"):
+            self.skipTest("no explorer.exe (no interactive session)")
+        out = self.run_setup_functions(["Get-SessionUser"],
+                                       "'USER|' + (Get-SessionUser); 'ME|' + [Security.Principal.WindowsIdentity]::GetCurrent().Name")
+        got = dict(l.split("|", 1) for l in out if "|" in l)
+        self.assertEqual(got["USER"].lower(), got["ME"].lower())
+
+    def test_logon_task_users_runs(self):
+        out = self.run_setup_functions(["Get-LogonTaskUsers"], "'N|' + @(Get-LogonTaskUsers 'Orch Engine (x)').Count")
+        self.assertTrue(any(l.startswith("N|") for l in out), out)
+
+    def test_setup_logon_user_wiring(self):
+        with open(os.path.join(ROOT, "setup.ps1"), encoding="utf-8-sig") as f:
+            text = f.read()
+        self.assertIn("[string]$User", text)
+        self.assertIn("$startup += @('--user', $EngineUser)", text)
+        self.assertIn("@($EngineUser) + @(Get-LogonTaskUsers $TaskName)", text)  # its user can write orch.db
+
     @unittest.skipIf(os.name == "nt" and _is_admin(), "elevated: the script would really install")
     def test_scripts_refuse_without_admin(self):
         target = os.path.join(self.tmp, "install")
