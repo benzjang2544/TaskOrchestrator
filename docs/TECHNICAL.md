@@ -205,7 +205,10 @@ index: `(queue, status, priority, scheduled_at, id)` สำหรับการ
 
 1. `setup_engine_logging` เขียน log ลง stdout (ถ้ามี console) และ `logs/engine-<queue>.log` (RotatingFileHandler ขนาด 5 MB เก็บ 5 ไฟล์)
 2. **`acquire_lock`** ภายใน `BEGIN IMMEDIATE` อ่าน `engine_lock` ถ้ามี engine อื่นที่ heartbeat สดกว่า 30 วินาที จะออกด้วย exit code 3
-   ถ้า heartbeat เก่ากว่านั้น (stale) จะยึด lock ต่อพร้อม log WARN
+   ถ้า heartbeat เก่ากว่านั้น (stale) จะยึด lock ต่อพร้อม log WARN และถ้า lock เป็นของเครื่องเดียวกันแต่ pid นั้นไม่มีอยู่แล้ว
+   (`pid_alive` เป็น False) จะยึดต่อทันทีโดยไม่รอ 30 วินาที (log `taking over dead engine lock`) เช่น engine แบบ logon ที่ถูกปิดตอน sign out
+   แล้ว login กลับภายใน 30 วินาที `pid_alive` ตอบ True เมื่อไม่แน่ใจ (access denied) จึงไม่มีทางยึด lock ของ engine ที่ยังรันอยู่
+   lock ของเครื่องอื่นยังใช้เกณฑ์ heartbeat อย่างเดียว
 3. ติดตั้ง signal handler สำหรับ `SIGINT`, `SIGTERM`, `SIGBREAK` (Windows)
 4. **`recover`** จัดการงานของคิวนี้ที่ค้าง `Running` (engine ก่อนหน้าตาย): log WARN, ถ้า pid ยังมีชีวิตจะ WARN ให้ตรวจสอบเอง
    (**ไม่ kill ให้** เพราะเลข pid อาจถูกนำไปใช้ซ้ำ) แล้ว `finalize(..., "engine lost")` ตามกติกา retry ปกติ
@@ -483,6 +486,7 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 | Engine error | kill tree แล้ว finalize เป็นล้มเหลว | รักษาการรันทีละงาน (§2) |
 | `stop-engine` + `engine_lock.stop_requested` (schema v2) | หยุด engine แบบ graceful ผ่าน DB | engine ที่ติดตั้งไว้ (pythonw) รับ signal ไม่ได้ ผู้ใช้อนุมัติแล้ว (เปลี่ยน data model §3) |
 | Trigger ที่ทำซ้ำทุก 5 นาทีใน install-startup | เพิ่มจาก `-AtStartup`/`-AtLogOn` | restart-on-failure ไม่ครอบคลุม engine ที่ crash หรือถูก kill ผู้ใช้อนุมัติแล้ว |
+| Engine lock ของ pid ที่ตายแล้วบนเครื่องเดียวกัน | ยึดต่อทันทีแม้ heartbeat ยังสด (§4 กำหนดให้รอ 30 วินาที) | sign out แล้ว login กลับเร็วทำให้ engine แบบ logon ไม่เริ่ม และต้องรอ trigger 5 นาที ผู้ใช้อนุมัติแล้ว |
 | เปลี่ยน queue ของ job | ย้าย run ที่ยัง `Pending` ไปคิวใหม่ด้วย | ถ้าไม่ย้าย run อาจค้างอยู่ในคิวที่ไม่มี engine |
 | `--desc ""` / ลบ description ใน GUI | ล้างค่าเป็น NULL | ทำแบบเดียวกับ `--after ""` |
 | `--db` (global flag) | กำหนด DB ได้จาก command line | ให้ task ใน Task Scheduler อ้าง DB ไฟล์เดียวกันได้แน่นอน |

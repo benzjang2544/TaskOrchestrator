@@ -84,12 +84,10 @@ class TestEngine(DBTestCase):
         try:
             self.assertEqual(self.status(rid), "Running")
             self.assertTrue(orch.pid_alive(orphan))
-            eng2 = self.start_engine()  # lock is stale-by-pid? no: heartbeat fresh -> must wait
-            rc = eng2.wait(15)
-            self.assertEqual(rc, orch.EXIT_LOCKED)  # previous lock heartbeat still fresh
-            self.con.execute("UPDATE engine_lock SET heartbeat='2000-01-01 00:00:00'")  # make it stale
+            # the lock's heartbeat is still fresh, but its engine is gone from this host: taken over at once
+            # (e.g. a logon engine killed at sign-out and relaunched at sign-in within LOCK_STALE_SEC)
             self.start_engine()
-            wait_until(lambda: self.status(rid) == "Failed", 30)
+            wait_until(lambda: self.status(rid) == "Failed", 15)
             row = self.run_row(rid)
             self.assertEqual(row["error"], "engine lost")
             logs = " ".join(l["message"] for l in orch.get_logs(self.con, rid))
@@ -282,6 +280,23 @@ class TestLockUnit(DBTestCase):
         self.assertIsNotNone(self.con.execute("SELECT 1 FROM engine_lock").fetchone())
         orch.release_lock(self.con, "q", "h", 2)
         self.assertIsNone(self.con.execute("SELECT 1 FROM engine_lock").fetchone())
+
+    def test_dead_engine_on_this_host_taken_over(self):
+        import socket
+        import subprocess
+        import sys
+        host = socket.gethostname()
+        p = subprocess.Popen([sys.executable, "-c", "pass"])
+        p.wait()
+        orch.acquire_lock(self.con, "q", host, p.pid)  # fresh heartbeat, but that process has exited
+        orch.acquire_lock(self.con, "q", host, os.getpid())
+        self.assertEqual(self.con.execute("SELECT pid FROM engine_lock").fetchone()[0], os.getpid())
+        with self.assertRaisesRegex(orch.OrchError, "already running"):  # owner alive: refused
+            orch.acquire_lock(self.con, "q", host, p.pid)
+        orch.release_lock(self.con, "q", host, os.getpid())
+        orch.acquire_lock(self.con, "q", "other-host", p.pid)  # another host: its pids mean nothing here
+        with self.assertRaisesRegex(orch.OrchError, "already running"):
+            orch.acquire_lock(self.con, "q", host, os.getpid())
 
     def test_stop_request(self):
         with self.assertRaisesRegex(orch.OrchError, "no running engine"):

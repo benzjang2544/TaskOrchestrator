@@ -1280,12 +1280,17 @@ def acquire_lock(con, queue: str, host: str, pid: int) -> None:
     with tx(con):
         row = con.execute("SELECT * FROM engine_lock WHERE queue=?", (queue,)).fetchone()
         fresh_after = fmt_ts(now_dt() - dt.timedelta(seconds=LOCK_STALE_SEC))
-        if row and (row["host"], row["pid"]) != (host, pid) and row["heartbeat"] > fresh_after:
+        # A fresh heartbeat whose engine is gone (e.g. killed at sign-out, then signed in again within
+        # LOCK_STALE_SEC) need not be waited out when that engine ran on this host; pid_alive is True
+        # when unsure (access denied), so a live engine is never taken over.
+        import socket  # local import: see run_engine
+        dead = row and row["host"] == socket.gethostname() and not pid_alive(row["pid"])
+        if row and (row["host"], row["pid"]) != (host, pid) and row["heartbeat"] > fresh_after and not dead:
             raise OrchError(f"an engine for queue {queue!r} is already running "
                             f"(host {row['host']}, pid {row['pid']}, heartbeat {row['heartbeat']})")
         if row and (row["host"], row["pid"]) != (host, pid):
-            log.warning("taking over stale engine lock of queue %r (host %s, pid %s, heartbeat %s)",
-                        queue, row["host"], row["pid"], row["heartbeat"])
+            log.warning("taking over %s engine lock of queue %r (host %s, pid %s, heartbeat %s)",
+                        "dead" if dead else "stale", queue, row["host"], row["pid"], row["heartbeat"])
         con.execute("INSERT OR REPLACE INTO engine_lock(queue, host, pid, heartbeat) VALUES(?,?,?,?)",
                     (queue, host, pid, now_str()))
 
