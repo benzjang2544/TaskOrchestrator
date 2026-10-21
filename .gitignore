@@ -6,3 +6,5 @@ backup/
 dist/
 python-*.exe
 *.whl
+Error/
+Res/

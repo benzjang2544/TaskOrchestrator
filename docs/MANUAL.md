@@ -194,6 +194,12 @@ python orch.py create rpa-sort --type command --queue ui --timeout 600 --retry 0
 >   งานถัดไปในคิวจะเริ่มซ้อนกับ robot ตัวเดิม
 > - ถ้า retry ทำงานหลัง timeout robot อาจถูกรันซ้อนกันสองรอบ ถ้า process รันซ้ำแล้วเกิดความเสียหายได้ ให้ตั้ง `--retry 0`
 
+> **Source ในหน้า Jobs ของ UiPath Orchestrator และเรื่อง license**
+> - งานที่ Orch รันจะขึ้น Source เป็น **Command Line** เสมอ เพราะเริ่มจาก `UiRobot.exe execute` ถือเป็นเรื่องปกติ
+>   และเปลี่ยนเป็น Assistant หรือ Manual ไม่ได้ (Assistant ต้องมีคนกดเอง ส่วน Manual ต้องสั่งผ่าน Orchestrator ซึ่งสั่ง robot แบบ Attended ไม่ได้)
+> - license แบบ Attended มีไว้ให้ robot ทำงานโดยมีคนดูอยู่ที่เครื่อง ถ้าจะใช้ Attended รันงานตามเวลาโดยไม่มีคนเฝ้า
+>   (เช่น ใช้เครื่อง robot ที่ล็อกอินอัตโนมัติ) ให้ถามตัวแทน UiPath ก่อนว่าเงื่อนไข license อนุญาตหรือไม่
+
 **RPA หรือโปรแกรมอื่น:** ใช้หลักการเดียวกัน ถ้าโปรแกรมมี CLI ที่รอจนเสร็จแล้วคืน exit code ก็ใช้ได้เลย
 (Python/Selenium ใช้ชนิด `python`, .exe ทั่วไปใช้ชนิด `command`)
 ส่วนโปรแกรมที่สั่งงานได้แค่ผ่าน URL หรือ shortcut จะได้แค่ "สั่งแล้วจบ" Orch จะไม่รู้ผลจริง
