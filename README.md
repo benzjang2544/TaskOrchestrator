@@ -252,3 +252,7 @@ stress test (SPEC §11) เปิด engine 3 คิวพร้อมกัน 
 - [ ] **ภาษาไทย**: `echo` ภาษาไทยผ่าน `command`, `Write-Output` ผ่าน `powershell`, `print` ผ่าน `python` ต้องแสดงถูกต้องทั้งใน `orch logs` และ GUI
 - [ ] **ย้ายงานจริง 3–5 งาน** (SQL / Script / HTTP) จาก Task Scheduler มาใช้ แล้วดูผลได้ครบทั้งใน GUI และ CLI
 - [ ] **ยกเลิก**: `Unregister-ScheduledTask` แล้ว engine ไม่เปิดเองอีกหลังรีสตาร์ท
+
+## License
+
+Apache License 2.0 ดูไฟล์ [LICENSE](LICENSE)
