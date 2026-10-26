@@ -75,7 +75,8 @@ Orch เป็นตัวตั้งเวลารันงานแทน Wi
 |---|---|
 | `orch.py` | core ทั้งหมด: DB, schedule, jobs, runs, executor, engine, `_exec`, install-startup และ CLI |
 | `orch_gui.py` | GUI (tkinter) เรียกฟังก์ชันใน `orch.py` เท่านั้น ไม่มี business logic ของตัวเอง |
-| `tests/` | ชุดทดสอบ `unittest` (`helpers.py` + `test_01` ถึง `test_12`) |
+| `tools/backup_db.py` | สคริปต์ backup `orch.db` (ใช้เป็นงานชนิด `python` ใน Orch ไม่ได้ import `orch.py`) |
+| `tests/` | ชุดทดสอบ `unittest` (`helpers.py` + `test_01` ถึง `test_13`) |
 | `*.bat` | ตัวเปิดโปรแกรมสำหรับผู้ใช้ (ASCII + CRLF) |
 | `setup.ps1` / `uninstall.ps1` | ตัวติดตั้งและตัวถอนการติดตั้ง (UTF-8 **with BOM** + CRLF เพราะ PowerShell 5.1 อ่านไฟล์ที่ไม่มี BOM เป็น ANSI ทำให้ข้อความภาษาไทยเพี้ยน) |
 | `logs/engine-<queue>.log` | log ของ engine (สร้างข้างไฟล์ DB) |
@@ -475,6 +476,7 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 | `test_10_gui` | ตาราง, refresh ในที่เดิม, ปุ่ม, dialog |
 | `test_11_install` | สคริปต์ install-startup, `--db`, ไฟล์ .bat, ภาษาไทยผ่าน cmd/PowerShell/Python, engine ผ่าน pythonw, setup/uninstall.ps1 (BOM, parse, ปฏิเสธเมื่อไม่ใช่ Administrator) |
 | `test_12_stress` | lock contention (เฉพาะเมื่อตั้ง `ORCH_STRESS=1`) |
+| `test_13_backup` | `tools/backup_db.py`: ไฟล์ที่ได้ครบ, หา DB จาก `ORCH_DB`, เก็บ N ไฟล์ล่าสุด |
 
 ## 18. ส่วนที่เพิ่มหรือตีความจาก SPEC
 
@@ -494,6 +496,7 @@ params ถูกส่งมาทางตัวแปร `ORCH_PARAMS` แล�
 | `_Cursor.fetchone` ปิด cursor | ป้องกัน snapshot ค้าง | connection ที่เปิดนานต้องเห็นการเขียนจากโปรเซสอื่น |
 | ไฟล์ `.bat` | ตัวเปิดโปรแกรมสำหรับผู้ใช้ | ผู้ใช้ขอเพิ่ม |
 | `setup.bat` / `uninstall.bat` / `package.bat` | ติดตั้งแบบดับเบิลคลิกครั้งเดียว | ผู้ใช้ขอ (เลือกแทนการทำเป็น .exe ด้วย PyInstaller) |
+| `tools/backup_db.py` | backup `orch.db` ทุกคืนผ่านงานใน Orch (MANUAL §10.6) | ผู้ใช้ขอก่อนขึ้น PROD ไม่เพิ่ม verb ใน `orch.py` |
 
 ## 19. ข้อจำกัดที่รู้
 

@@ -448,6 +448,28 @@ python orch.py engine --queue default       :: หรือ orch_engine.bat defa
 ### 10.5 Proxy
 งาน `http` ใช้ proxy ของระบบ ถ้าเรียก URL ภายในองค์กรไม่ได้เพราะ proxy ให้ใส่ `"env": {"no_proxy": "*"}` ใน params
 
+### 10.6 Backup และ restore ฐานข้อมูล
+`tools\backup_db.py` คัดลอก `orch.db` ด้วย backup API ของ SQLite ได้ระหว่างที่ engine ทำงานอยู่ (ไม่ต้องหยุด engine)
+แล้วตรวจ `integrity_check` ของไฟล์ที่ได้ ไฟล์จะอยู่ที่ `backup\orch-YYYYMMDD.db` ข้าง DB รันซ้ำในวันเดียวกันจะเขียนทับไฟล์ของวันนั้น
+และเก็บไว้ 14 ไฟล์ล่าสุด (เปลี่ยนด้วย `--keep N` ส่วน `--dest` ใช้เปลี่ยนโฟลเดอร์) setup.bat ไม่แตะโฟลเดอร์ `backup`
+
+ตั้งเป็นงานใน Orch ให้รันทุกคืนบนคิว `default` (engine ในนาม SYSTEM เขียนโฟลเดอร์ได้ และส่ง `ORCH_DB` ให้งานเอง):
+
+```cmd
+python orch.py create backup-db --type python --file C:\Orch\tools\backup_db.py --cron "0 1 * * *" --retry 1
+python orch.py run backup-db
+```
+
+ควร copy โฟลเดอร์ `backup` ไปเก็บที่เครื่องอื่นด้วย เพราะถ้าดิสก์เสีย backup ก็จะหายไปพร้อมกัน
+
+**Restore** (เปิด PowerShell แบบ Administrator แล้วทำทีละคิว `default` และ `ui`):
+1. `Disable-ScheduledTask 'Orch Engine (default)'` เพื่อไม่ให้ trigger ทุก 5 นาทีเปิด engine ขึ้นมาใหม่
+2. `orch stop-engine --queue default` (ทำทั้งสองข้อกับทุกคิวก่อนไปข้อ 3)
+3. ย้าย `orch.db`, `orch.db-wal`, `orch.db-shm` ออกไปเก็บไว้ แล้ว copy `backup\orch-YYYYMMDD.db` มาเป็น `orch.db`
+4. `Enable-ScheduledTask 'Orch Engine (default)'` แล้ว `Start-ScheduledTask 'Orch Engine (default)'` (คิว `ui` จะเปิดเองภายใน 5 นาทีเมื่อ user login อยู่)
+
+งานที่รันหลังเวลาของ backup จะไม่มีอยู่ในประวัติ และ `next_run_at` จะกลับไปเป็นค่าตอนที่ backup ไว้ รอบที่พลาดไปจะเป็นไปตาม missed policy ของแต่ละงาน (§5.5)
+
 ## 11. ใช้งานจาก PowerShell
 
 ทุกคำสั่งที่แสดงผลรองรับ `--json` (`query`, `runs`) จึงใช้ร่วมกับ `ConvertFrom-Json` ได้:
