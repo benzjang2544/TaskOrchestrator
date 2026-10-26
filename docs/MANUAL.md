@@ -51,6 +51,9 @@
 | ถอนการติดตั้ง | ดับเบิลคลิก `C:\Orch\uninstall.bat` (ลบ task **ของทุกคิว**, ไอคอน และ PATH แต่เก็บ `C:\Orch` และ `orch.db` ไว้) ตอนจบจะแสดงคำสั่ง `setup.bat` ของแต่ละคิวไว้ใช้ติดตั้งกลับ เพราะ setup ติดตั้งครั้งละหนึ่งคิว |
 | สร้าง zip ไปติดตั้งเครื่องอื่น | รัน `package.bat` บนเครื่องที่มี git จะได้ `dist\Orch-<วันที่>.zip` |
 
+**หลังติดตั้งครั้งแรก:** setup ไม่ได้สร้างงาน backup ฐานข้อมูลให้ ต้องสร้างเองครั้งเดียวตาม [§10.6](#106-backup-และ-restore-ฐานข้อมูล)
+(ติดตั้งทับภายหลัง งานนี้ก็ยังอยู่ เพราะ setup ไม่แตะ `orch.db`)
+
 log ของการติดตั้งอยู่ที่ `C:\Orch\logs\setup-<เวลา>.log` และของการถอนการติดตั้งอยู่ที่ `logs\uninstall-<เวลา>.log`
 
 ### 1.2 ติดตั้งเอง
@@ -449,26 +452,112 @@ python orch.py engine --queue default       :: หรือ orch_engine.bat defa
 งาน `http` ใช้ proxy ของระบบ ถ้าเรียก URL ภายในองค์กรไม่ได้เพราะ proxy ให้ใส่ `"env": {"no_proxy": "*"}` ใน params
 
 ### 10.6 Backup และ restore ฐานข้อมูล
-`tools\backup_db.py` คัดลอก `orch.db` ด้วย backup API ของ SQLite ได้ระหว่างที่ engine ทำงานอยู่ (ไม่ต้องหยุด engine)
-แล้วตรวจ `integrity_check` ของไฟล์ที่ได้ ไฟล์จะอยู่ที่ `backup\orch-YYYYMMDD.db` ข้าง DB รันซ้ำในวันเดียวกันจะเขียนทับไฟล์ของวันนั้น
-และเก็บไว้ 14 ไฟล์ล่าสุด (เปลี่ยนด้วย `--keep N` ส่วน `--dest` ใช้เปลี่ยนโฟลเดอร์) setup.bat ไม่แตะโฟลเดอร์ `backup`
 
-ตั้งเป็นงานใน Orch ให้รันทุกคืนบนคิว `default` (engine ในนาม SYSTEM เขียนโฟลเดอร์ได้ และส่ง `ORCH_DB` ให้งานเอง):
+`orch.db` เก็บทุกอย่างของ Orch ไว้ในไฟล์เดียว ทั้งงาน, schedule, ประวัติการรัน และ log ของแต่ละ run ถ้าไฟล์นี้เสียหรือหาย
+งานทั้งหมดจะหายไปด้วย **setup.bat ไม่ได้สร้างงาน backup ให้** ต้องสร้างเองครั้งเดียวหลังติดตั้งครั้งแรกตามข้อ 10.6.2
+
+#### 10.6.1 สคริปต์ `tools\backup_db.py` ทำอะไร
+- คัดลอก `orch.db` ด้วย backup API ของ SQLite **ระหว่างที่ engine ทำงานอยู่ได้เลย** ไม่ต้องหยุด engine หรือรอให้ไม่มีงานรัน
+  (ห้าม copy `orch.db` ตรง ๆ ด้วย Explorer หรือ `copy` ระหว่างที่ engine เปิดอยู่ เพราะข้อมูลล่าสุดอาจยังอยู่ใน `orch.db-wal` ไฟล์ที่ได้จึงไม่ครบ)
+- ตรวจไฟล์ที่ได้ด้วย `PRAGMA integrity_check` ถ้าไม่ผ่านจะลบไฟล์นั้นทิ้งและจบด้วย error (run จะเป็น Failed/Dead ให้เห็นใน GUI)
+- ตั้งชื่อไฟล์ตามวันที่เป็น `orch-YYYYMMDD.db` ถ้ารันซ้ำในวันเดียวกันจะเขียนทับไฟล์ของวันนั้น
+- เก็บไว้ **14 ไฟล์ล่าสุด** แล้วลบไฟล์ที่เก่ากว่า (ลบเฉพาะไฟล์ชื่อแบบ `orch-YYYYMMDD.db` ไฟล์อื่นในโฟลเดอร์จะไม่ถูกแตะ)
+- setup.bat และ uninstall.bat ไม่แตะโฟลเดอร์ `backup`
+
+| ตัวเลือก | ค่าตั้งต้น | ความหมาย |
+|---|---|---|
+| `--db PATH` | `ORCH_DB` หรือ `orch.db` ข้าง `orch.py` | DB ที่จะ backup (งานใน Orch ได้ `ORCH_DB` จาก engine อยู่แล้ว จึงไม่ต้องใส่) |
+| `--dest DIR` | โฟลเดอร์ `backup` ข้าง DB (`C:\Orch\backup`) | โฟลเดอร์ที่เก็บไฟล์ backup |
+| `--keep N` | 14 | จำนวนไฟล์ที่เก็บไว้ (อย่างน้อย 1) |
+
+#### 10.6.2 ตั้งให้ backup ทุกคืน (ทำครั้งเดียวหลังติดตั้ง)
+เปิด Command Prompt (ไม่ต้องเป็น Administrator แต่ account ต้องมีสิทธิ์เขียน `C:\Orch` ตาม §1.1) แล้วสั่ง:
 
 ```cmd
-python orch.py create backup-db --type python --file C:\Orch\tools\backup_db.py --cron "0 1 * * *" --retry 1
-python orch.py run backup-db
+orch create backup-db --type python --file C:\Orch\tools\backup_db.py --cron "0 1 * * *" --retry 1 --desc "backup orch.db ทุกคืน"
+orch run backup-db
+orch runs --job backup-db
 ```
 
-ควร copy โฟลเดอร์ `backup` ไปเก็บที่เครื่องอื่นด้วย เพราะถ้าดิสก์เสีย backup ก็จะหายไปพร้อมกัน
+- ไม่ได้ใส่ `--queue` งานจึงอยู่คิว `default` ซึ่ง engine รันในนาม SYSTEM จึงเขียน `C:\Orch\backup` ได้ **อย่าใส่ไว้คิว `ui`**
+  เพราะ user ของ robot อาจไม่มีสิทธิ์เขียน และ engine `ui` ทำงานเฉพาะตอนที่ user login อยู่
+- `0 1 * * *` คือตี 1 ทุกคืน คิว `default` แยกจากคิว `ui` จึงรันพร้อมงาน RPA ได้โดยไม่ต้องรอกัน
+- `orch run backup-db` คือสั่งรันทันที 1 ครั้งเพื่อทดสอบ รอสักครู่แล้ว `orch runs --job backup-db` ต้องเป็น `Succeeded`
+  และใน log (`orch logs <RUN_ID>`) ต้องมีบรรทัด `backed up C:\Orch\orch.db -> C:\Orch\backup\orch-YYYYMMDD.db (... bytes)`
+- ถ้าสั่ง `create` แล้วได้ error ว่ามีชื่อนี้อยู่แล้ว แปลว่าเคยสร้างไว้ก่อนแล้ว ไม่ต้องทำซ้ำ
 
-**Restore** (เปิด PowerShell แบบ Administrator แล้วทำทีละคิว `default` และ `ui`):
-1. `Disable-ScheduledTask 'Orch Engine (default)'` เพื่อไม่ให้ trigger ทุก 5 นาทีเปิด engine ขึ้นมาใหม่
-2. `orch stop-engine --queue default` (ทำทั้งสองข้อกับทุกคิวก่อนไปข้อ 3)
-3. ย้าย `orch.db`, `orch.db-wal`, `orch.db-shm` ออกไปเก็บไว้ แล้ว copy `backup\orch-YYYYMMDD.db` มาเป็น `orch.db`
-4. `Enable-ScheduledTask 'Orch Engine (default)'` แล้ว `Start-ScheduledTask 'Orch Engine (default)'` (คิว `ui` จะเปิดเองภายใน 5 นาทีเมื่อ user login อยู่)
+ปรับแต่งภายหลัง:
 
-งานที่รันหลังเวลาของ backup จะไม่มีอยู่ในประวัติ และ `next_run_at` จะกลับไปเป็นค่าตอนที่ backup ไว้ รอบที่พลาดไปจะเป็นไปตาม missed policy ของแต่ละงาน (§5.5)
+| ต้องการ | คำสั่ง |
+|---|---|
+| เปลี่ยนเวลา (เช่น 23:30) | `orch change backup-db --cron "30 23 * * *"` (ใส่ schedule ใหม่ใน `change` จะแทนที่ schedule เดิมทั้งหมด) |
+| เก็บไว้ 30 ไฟล์ | `orch change backup-db --args="--keep 30"` (ต้องเขียน `--args=` ติดกัน เพราะค่าขึ้นต้นด้วย `-`) |
+| เก็บไว้ที่ดิสก์อื่น | `orch change backup-db --args="--dest D:\OrchBackup"` (ใส่หลายตัวพร้อมกันได้ เช่น `--args="--dest D:\OrchBackup --keep 30"`) |
+| หยุด backup ชั่วคราว | `orch disable backup-db` แล้วเปิดกลับด้วย `orch enable backup-db` |
+
+#### 10.6.3 ตรวจว่า backup ทำงานอยู่
+- CLI: `orch runs --job backup-db --limit 7` ต้องเห็น `Succeeded` ทุกคืน
+  ส่วน GUI ให้ดูที่แท็บ Queue / Runs (กรอง queue `default`) และแท็บ Jobs ช่อง next run ต้องเป็นตี 1 ของคืนถัดไป
+- เปิด `C:\Orch\backup` ควรมีไฟล์ของทุกวันจนถึงเมื่อวาน และไม่เกิน 14 ไฟล์
+- Orch ยังไม่มีระบบแจ้งเตือน ถ้า backup ล้มเหลว run จะเป็น `Dead` ให้เห็นใน GUI เท่านั้น จึงควรเปิดดูเป็นระยะ
+
+#### 10.6.4 เก็บสำเนาไว้นอกเครื่อง
+โฟลเดอร์ `backup` อยู่บนดิสก์เดียวกับ `orch.db` ถ้าดิสก์หรือเครื่องเสีย backup ก็จะหายไปพร้อมกัน
+จึงควร copy ไปเก็บที่อื่นเป็นระยะ เช่น copy ด้วยมือ หรือใช้ระบบ backup ของบริษัทเก็บโฟลเดอร์ `C:\Orch\backup` รวมไปด้วย
+
+ถ้าจะให้ Orch copy ไป network share เอง ต้องรู้ไว้ว่างานบนคิว `default` รันในนาม SYSTEM
+เวลาเข้า network จะใช้ account ของเครื่อง (`DOMAIN\ชื่อเครื่อง$`) share ปลายทางจึงต้องให้สิทธิ์เขียนกับ account นั้นก่อน (ขอฝ่าย IT) ตัวอย่างงาน:
+
+```cmd
+orch create backup-copy --type command --command "robocopy C:\Orch\backup \\fileserver\OrchBackup\%COMPUTERNAME% orch-*.db /R:2 /W:30 & if errorlevel 8 (exit /b 1) else (exit /b 0)" --cron "30 1 * * *"
+```
+(robocopy ใช้ exit code 0–7 สำหรับกรณีที่สำเร็จ ส่วนท้ายของคำสั่งจึงแปลงเป็น 0 = สำเร็จ หรือ 1 = ล้มเหลว
+ห้ามเขียนเป็น `%ERRORLEVEL%` เพราะ cmd แทนค่าตัวแปรนี้ก่อน robocopy จะรัน)
+
+#### 10.6.5 Restore (กู้ฐานข้อมูลจาก backup)
+ทำเมื่อ `orch.db` เสียหาย (เช่น GUI/CLI ขึ้น `database disk image is malformed`) หรือข้อมูลถูกลบไปโดยไม่ตั้งใจ
+ระหว่างที่ restore จะไม่มีงานรัน เปิด **PowerShell แบบ Administrator** แล้วทำตามลำดับ:
+
+1. ปิด task ของ**ทุกคิว**ก่อน เพื่อไม่ให้ trigger ที่ทำซ้ำทุก 5 นาทีเปิด engine ขึ้นมาระหว่างที่ restore:
+   ```powershell
+   Get-ScheduledTask 'Orch Engine (*)' | Disable-ScheduledTask
+   ```
+2. หยุด engine ทุกคิวแบบปลอดภัย (งานที่รันอยู่จะกลับไปเป็น `Pending`):
+   ```powershell
+   orch stop-engine --queue default
+   orch stop-engine --queue ui
+   ```
+   ต้องได้ `engine stopped` หรือ `no running engine` ของทุกคิว
+3. ย้ายไฟล์ DB ปัจจุบันออกไปเก็บไว้ (อย่าลบ เผื่อต้องใช้ตรวจสอบ) ต้องย้ายให้ครบทั้ง 3 ไฟล์ แล้ว copy ไฟล์ backup ที่ต้องการมาแทน:
+   ```powershell
+   cd C:\Orch
+   mkdir broken-db
+   Move-Item orch.db, orch.db-wal, orch.db-shm broken-db\ -ErrorAction SilentlyContinue
+   Copy-Item backup\orch-20261025.db orch.db
+   ```
+4. ตรวจไฟล์ที่ได้: `orch query` ต้องแสดงงานครบ
+5. เปิด task กลับ แล้วสั่งให้ engine เริ่มทันที:
+   ```powershell
+   Get-ScheduledTask 'Orch Engine (*)' | Enable-ScheduledTask
+   Start-ScheduledTask 'Orch Engine (default)'
+   ```
+   engine ของคิว `ui` จะเปิดเองภายใน 5 นาทีถ้า user ของ robot login อยู่ ตรวจว่าทุกคิวทำงานแล้วได้จากแถบบนของ GUI
+
+ผลของการ restore:
+- ประวัติการรันและการแก้ไขงานที่เกิด**หลังเวลาของ backup จะหายไป** ถ้าสร้างหรือแก้งานหลังจากนั้นต้องทำใหม่
+- `next_run_at` จะกลับไปเป็นค่าตอน backup รอบที่พลาดไปจะเป็นไปตาม missed policy ของแต่ละงาน (§5.5) งานที่ใช้ `run_all` อาจรันย้อนหลังหลายรอบ
+- ถ้าตอน backup มีงานกำลังรันอยู่ engine จะตั้ง run นั้นเป็น `engine lost` แล้ว retry ตามที่ตั้งไว้ (§9) จึงอาจมีงานรันซ้ำ
+  ดังนั้นงานต้อง idempotent ตามที่ต้องเป็นอยู่แล้ว
+
+#### 10.6.6 Backup ก่อนอัปเดตหรือย้ายเครื่อง
+setup.bat ไม่แตะ `orch.db` อยู่แล้ว แต่ถ้าจะให้มั่นใจขึ้น ให้ backup ก่อนติดตั้งทับ ใช้สคริปต์จากโฟลเดอร์ zip ที่แตกไว้ได้เลย:
+
+```cmd
+python <โฟลเดอร์ที่แตก zip>\Orch\tools\backup_db.py --db C:\Orch\orch.db --dest %USERPROFILE%\Desktop\orch-backup
+```
+
+ถ้าจะย้ายไปเครื่องใหม่ ให้ติดตั้ง Orch บนเครื่องใหม่ก่อน แล้ว restore ตามข้อ 10.6.5 โดยใช้ไฟล์ backup จากเครื่องเดิม
+path ในงาน (เช่น ตำแหน่งสคริปต์หรือ `UiRobot.exe`) ต้องมีอยู่จริงบนเครื่องใหม่ด้วย
 
 ## 11. ใช้งานจาก PowerShell
 
