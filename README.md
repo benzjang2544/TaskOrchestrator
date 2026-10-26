@@ -209,7 +209,7 @@ test ของ engine เปิด `orch.py engine` เป็น subprocess จ�
 stress test (SPEC §11) เปิด engine 3 คิวพร้อมกัน มีตัวอ่านแบบ GUI ทุก 0.2 วินาที และสั่ง CLI เขียนซ้ำ ๆ แล้วตรวจว่าไม่มี `database is locked`,
 ไม่มีงานในคิวเดียวกันรันซ้อนกัน และ output ไม่หาย (ตั้ง `ORCH_STRESS_SECONDS` เพื่อเปลี่ยนระยะเวลาได้)
 
-**ยังไม่ได้ทดสอบบน Linux:** Phase 1 ทดสอบบน Windows 10/11 เท่านั้น โค้ดฝั่ง POSIX (`killpg`, `start_new_session`, SIGTERM) มีอยู่แล้วแต่ยังไม่เคยรันจริง
+**ใช้งานบน Windows เท่านั้น:** Orch ใช้งานจริงและทดสอบบน Windows 10/11 เท่านั้น จึงไม่ทดสอบบน Linux (ผู้ใช้ตัดสินใจ 2026-10-26) โค้ดฝั่ง POSIX (`killpg`, `start_new_session`, SIGTERM) ยังมีอยู่แต่ไม่เคยรันจริง
 
 | SPEC §9 | test |
 |---|---|
@@ -229,29 +229,43 @@ stress test (SPEC §11) เปิด engine 3 คิวพร้อมกัน 
 
 ## Manual test checklist (Windows)
 
-ส่วนที่ต้องทดสอบบนเครื่อง Windows จริง (ไม่อยู่ในชุด test อัตโนมัติ):
+ส่วนที่ต้องทดสอบบนเครื่อง Windows จริง (ไม่อยู่ในชุด test อัตโนมัติ) ผลทดสอบเขียนไว้ใต้แต่ละข้อ:
 
 - [ ] **setup.bat บนเครื่องใหม่** (หรือ Windows Sandbox) ที่ยังไม่มี Python ทั้งแบบมีอินเทอร์เน็ต (winget) และแบบ offline:
       ได้ไอคอน Orch, `orch query` ใช้ได้ในหน้าต่างใหม่ และแถบบนของ GUI แสดงว่า engine `default` กำลังทำงาน
-- [ ] **อัปเดตด้วย setup.bat ทับ**: งานและประวัติเดิมยังอยู่ และ engine log มี `stop requested (stop-engine)` ก่อน engine เริ่มใหม่
-- [ ] **uninstall.bat**: task, ไอคอน และ PATH หายไป ส่วน `orch.db` ยังอยู่
+      — ผ่านบางส่วน: ติดตั้งบนเครื่องทดสอบเครื่องใหม่ได้ (2026-10-07/08) แต่เครื่องนั้นมี Python 3.11 อยู่แล้ว ยังไม่ได้ทดสอบกรณีที่ไม่มี Python
+- [x] **อัปเดตด้วย setup.bat ทับ**: งานและประวัติเดิมยังอยู่ และ engine log มี `stop requested (stop-engine)` ก่อน engine เริ่มใหม่
+      — ผ่าน 2026-10-08 เครื่องทดสอบ และ เครื่องพัฒนา
+- [x] **uninstall.bat**: task, ไอคอน และ PATH หายไป ส่วน `orch.db` ยังอยู่
+      — ผ่าน 2026-10-07 เครื่องทดสอบ
 
-- [ ] **Boot task**: เปิด prompt แบบ Administrator แล้วสั่ง `install-startup --queue default --trigger boot --apply` จากนั้นดูผลว่า `ExecutionTimeLimit` เป็น `PT0S`
+- [x] **Boot task**: เปิด prompt แบบ Administrator แล้วสั่ง `install-startup --queue default --trigger boot --apply` จากนั้นดูผลว่า `ExecutionTimeLimit` เป็น `PT0S`
       และ `Triggers` เป็น 2 (สคริปต์แสดงทั้งสองค่าตอนจบ หรือดูด้วย `(Get-ScheduledTask 'Orch Engine (default)').Settings.ExecutionTimeLimit`)
-- [ ] **รันได้โดยไม่มีคน login**: รีสตาร์ทเครื่องแต่ยังไม่ login แล้วตรวจจากเครื่องอื่นหรือ login ภายหลังว่า `logs\engine-default.log` มีบรรทัด `started`
+      — ผ่าน 2026-10-08 เครื่องทดสอบ และ 2026-10-26 เครื่องพัฒนา
+- [x] **รันได้โดยไม่มีคน login**: รีสตาร์ทเครื่องแต่ยังไม่ login แล้วตรวจจากเครื่องอื่นหรือ login ภายหลังว่า `logs\engine-default.log` มีบรรทัด `started`
       และงานที่ตั้ง `every: 1m` มีประวัติการรันช่วงก่อน login
-- [ ] **สิทธิ์ของ SYSTEM**: engine ในนาม SYSTEM อ่าน/เขียน `orch.db` และโฟลเดอร์ `logs` ได้ และงานที่เรียกไฟล์ของ user ทำงานได้
-- [ ] **Restart อัตโนมัติ**: kill `pythonw.exe` ของ engine ใน Task Manager แล้วดูว่าภายใน 5 นาที Task Scheduler เปิด engine ขึ้นใหม่
+      — ผ่าน 2026-10-26 เครื่องพัฒนา: บูตเสร็จ 11:41:23, engine เริ่ม 11:41:33, งาน `every 1m` รัน 11:41:34 ในนาม SYSTEM ก่อน login (11:42:10)
+- [x] **สิทธิ์ของ SYSTEM**: engine ในนาม SYSTEM อ่าน/เขียน `orch.db` และโฟลเดอร์ `logs` ได้ และงานที่เรียกไฟล์ของ user ทำงานได้
+      — ผ่าน 2026-10-26 เครื่องพัฒนา (งานที่เรียกสคริปต์ในโฟลเดอร์ของ user และงาน backup ที่เขียน `C:\Orch\backup`)
+- [x] **Restart อัตโนมัติ**: kill `pythonw.exe` ของ engine ใน Task Manager แล้วดูว่าภายใน 5 นาที Task Scheduler เปิด engine ขึ้นใหม่
       และ run ที่ค้างอยู่ถูกตั้งเป็น `engine lost` แล้ว retry
-- [ ] **stop-engine กับ engine ที่รันในนาม SYSTEM**: ระหว่างงานยาวรันอยู่ สั่ง `orch stop-engine` ต้องได้ `engine stopped`, งานกลับเป็น `Pending`
+      — ผ่าน 2026-10-26 เครื่องพัฒนา: kill 11:33:14 → engine กลับมา 11:35:00, run ที่ค้างเป็น `engine lost` แล้ว retry จน Succeeded
+- [x] **stop-engine กับ engine ที่รันในนาม SYSTEM**: ระหว่างงานยาวรันอยู่ สั่ง `orch stop-engine` ต้องได้ `engine stopped`, งานกลับเป็น `Pending`
       และ engine log มี `stop requested (stop-engine)` จากนั้นภายใน 5 นาที engine ต้องกลับมาเองแล้วรันงานนั้นต่อ
-- [ ] **ไม่ถูกหยุดที่ 72 ชั่วโมง**: ปล่อย engine รันต่อเนื่อง ≥ 72 ชั่วโมง ใน engine log ต้องไม่มีการ stop/start ในช่วงนั้น
-- [ ] **Logon task**: `install-startup --queue ui --trigger logon --apply` แล้ว logout/login ตรวจว่า engine ของคิว `ui` เปิดใน session ของ user
+      — ผ่าน 2026-10-26 เครื่องพัฒนา: งานกลับเป็น `Pending` (attempt ไม่เพิ่ม), engine กลับมาใน 52 วินาทีแล้วรันจน Succeeded
+- [x] **ไม่ถูกหยุดที่ 72 ชั่วโมง**: ปล่อย engine รันต่อเนื่อง ≥ 72 ชั่วโมง ใน engine log ต้องไม่มีการ stop/start ในช่วงนั้น
+      — ผ่าน เครื่องทดสอบ: engine `ui` รันต่อเนื่อง 2026-10-08 16:08 → 2026-10-20 14:17
+- [x] **Logon task**: `install-startup --queue ui --trigger logon --apply` แล้ว logout/login ตรวจว่า engine ของคิว `ui` เปิดใน session ของ user
       และงาน UI automation (เช่น เปิด Notepad) มองเห็นหน้าต่างได้
-- [ ] **Kill process tree**: งาน `.bat` ที่เปิดโปรแกรมลูกหลายชั้น เมื่อถูก timeout หรือ `end` ต้องไม่มีโปรเซสลูกค้างใน Task Manager
+      — ผ่าน 2026-10-08 เครื่องทดสอบ: engine `ui` รันในนาม user ของ robot (ไม่ใช่ admin) และงาน UiPath ทำงานได้
+- [x] **Kill process tree**: งาน `.bat` ที่เปิดโปรแกรมลูกหลายชั้น เมื่อถูก timeout หรือ `end` ต้องไม่มีโปรเซสลูกค้างใน Task Manager
+      — ผ่าน 2026-10-26 เครื่องพัฒนา (.bat → .bat → ping + powershell ทั้ง timeout และ `end`) ส่วนงาน UiPath ดูข้อจำกัดใน MANUAL §4.7
 - [ ] **ภาษาไทย**: `echo` ภาษาไทยผ่าน `command`, `Write-Output` ผ่าน `powershell`, `print` ผ่าน `python` ต้องแสดงถูกต้องทั้งใน `orch logs` และ GUI
-- [ ] **ย้ายงานจริง 3–5 งาน** (SQL / Script / HTTP) จาก Task Scheduler มาใช้ แล้วดูผลได้ครบทั้งใน GUI และ CLI
-- [ ] **ยกเลิก**: `Unregister-ScheduledTask` แล้ว engine ไม่เปิดเองอีกหลังรีสตาร์ท
+      — ผ่านบางส่วน 2026-10-26 เครื่องพัฒนา: ภาษาไทยใน `run_log` ถูกต้องทั้ง 3 แบบ (`orch logs`) ยังไม่ได้ตรวจใน GUI
+- [x] **ย้ายงานจริง 3–5 งาน** (SQL / Script / HTTP) จาก Task Scheduler มาใช้ แล้วดูผลได้ครบทั้งใน GUI และ CLI
+      — ผ่านเฉพาะงาน RPA (UiPath) 5 งานบน เครื่องทดสอบ ยังไม่มีงาน SQL/HTTP จริง
+- [x] **ยกเลิก**: `Unregister-ScheduledTask` แล้ว engine ไม่เปิดเองอีกหลังรีสตาร์ท
+      — ผ่าน 2026-10-26 เครื่องพัฒนา
 
 ## License
 
